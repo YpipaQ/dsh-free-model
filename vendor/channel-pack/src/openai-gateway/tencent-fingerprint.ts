@@ -190,8 +190,11 @@ const CONTENT_FINGERPRINTS: readonly ContentFingerprint[] = [
     // 且不动后半句 —— 破坏 agent 提示词的语义比多拦一轮更糟。
     // ⚠️ 匹配仍走本文件的**大小写不敏感 + 位置无关** replaceAll（行首锚定是
     // 服务端的判据，不是我们的改写范围）—— 改写范围宁可略宽。
-    find: 'You are an AI agent powered by DeepSeek Harness.',
-    replace: 'You are an AI agent running on DeepSeek Harness.',
+    // ⚠️ **`find` 刻意不带末尾句点**（对齐上游 76d33062）：DSH 哪天把句号改成别的
+    // 标点或去掉，带句点的写法会**静默停止匹配**（症状 = 渠道整轮 400 复发，
+    // 与「完全没登记」同形）。不带句点只要求前 52 字符逐字一致。
+    find: 'You are an AI agent powered by DeepSeek Harness',
+    replace: 'You are an AI agent built on the DeepSeek Harness runtime',
     note: '2026-10-21 本机对 copilot.tencent.com 实测：原句 400/11128、改写后 200（3 模型复验）',
   },
   {
@@ -328,6 +331,43 @@ const CONTENT_FINGERPRINTS: readonly ContentFingerprint[] = [
     note: 'Gitee IKLYCT；本机 2026-10-18 对 workbuddy / CodeBuddy 双端点实测：'
       + 'system（含非首位）与 assistant 正文均 400/11128，user / reasoning_content / '
       + 'tool 结果放行，改写后两端点均 200',
+  },
+  {
+    // ★ **DSH 的 Web GUI 环境说明句**（2026-10-29 本机二分定位，**上游尚未登记**）。
+    //
+    // ## 怎么发现的：前两条都已改写、整段仍 400 逼出来的第三条
+    //
+    // 0.5.2 上线后本机复验：真实 system 里身份首句与 `@` 文件引用句**都确认已改写**，
+    // 但**整段仍然 400**。行级二分 58 行 → 定位到这一行（1111 字符），
+    // 再前缀二分到**精确 221 字符**（220 放行）。
+    //
+    // ## 触发性（本机 2026-10-29，copilot.tencent.com，真实账号）
+    //
+    // | 探针 | 结果 |
+    // |---|---|
+    // | 该行整行（1111 字符） | ❌ 400 |
+    // | 改 `they mean this GUI` → `they mean the GUI` | ✅ **200（采用）** |
+    // | 改 `DeepSeek Harness Web GUI` → `… web interface` | ✅ 200 |
+    // | 改 `You are interacting` → `You are talking` | ✅ 200 |
+    //
+    // ⇒ 服务端认**逐字符长字面量**，改任一字符即放行。
+    //
+    // ## 为什么选「this GUI → the GUI」
+    //
+    // 三种改法都实测 200。选这一条因为**不碰专有名词、不改动词、句长几乎不变、
+    // 语义完全等同**（两者都指当前这个 GUI）。改 `Web GUI` 会动产品名形态，
+    // 改 `interacting` 会改语气 —— 都没必要。
+    //
+    // ⚠️ 已知边界（与 `@` 那条同型）：服务端认逐字符长字面量 ⇒ DSH 改动这句任一
+    // 字符，本规则会**静默停止匹配**（症状 = 该渠道整轮 400 复发）。
+    find: 'You are interacting with the user through the DeepSeek Harness Web GUI '
+      + 'whose URL the runtime context names. When the user refers to "this page", '
+      + '"this GUI", or "this app" without naming another target, they mean this GUI.',
+    replace: 'You are interacting with the user through the DeepSeek Harness Web GUI '
+      + 'whose URL the runtime context names. When the user refers to "this page", '
+      + '"the GUI", or "this app" without naming another target, they mean the GUI.',
+    note: '2026-10-29 本机二分定位（上游尚未登记）：221 字符字面量、220 放行；'
+      + '前两条已改写但整段仍 400 时逼出来的第三条；改 this GUI→the GUI 实测 200',
   },
 ]
 

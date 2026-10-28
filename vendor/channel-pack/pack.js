@@ -34567,8 +34567,11 @@ var CONTENT_FINGERPRINTS = [
     // 且不动后半句 —— 破坏 agent 提示词的语义比多拦一轮更糟。
     // ⚠️ 匹配仍走本文件的**大小写不敏感 + 位置无关** replaceAll（行首锚定是
     // 服务端的判据，不是我们的改写范围）—— 改写范围宁可略宽。
-    find: "You are an AI agent powered by DeepSeek Harness.",
-    replace: "You are an AI agent running on DeepSeek Harness.",
+    // ⚠️ **`find` 刻意不带末尾句点**（对齐上游 76d33062）：DSH 哪天把句号改成别的
+    // 标点或去掉，带句点的写法会**静默停止匹配**（症状 = 渠道整轮 400 复发，
+    // 与「完全没登记」同形）。不带句点只要求前 52 字符逐字一致。
+    find: "You are an AI agent powered by DeepSeek Harness",
+    replace: "You are an AI agent built on the DeepSeek Harness runtime",
     note: "2026-10-21 \u672C\u673A\u5BF9 copilot.tencent.com \u5B9E\u6D4B\uFF1A\u539F\u53E5 400/11128\u3001\u6539\u5199\u540E 200\uFF083 \u6A21\u578B\u590D\u9A8C\uFF09"
   },
   {
@@ -34698,6 +34701,38 @@ var CONTENT_FINGERPRINTS = [
     // 实测两端点均 200（buddy / workbuddy，2026-10-18）。措辞与原文等义。
     replace: "To give feedback, users should report the issue at the project issue tracker",
     note: "Gitee IKLYCT\uFF1B\u672C\u673A 2026-10-18 \u5BF9 workbuddy / CodeBuddy \u53CC\u7AEF\u70B9\u5B9E\u6D4B\uFF1Asystem\uFF08\u542B\u975E\u9996\u4F4D\uFF09\u4E0E assistant \u6B63\u6587\u5747 400/11128\uFF0Cuser / reasoning_content / tool \u7ED3\u679C\u653E\u884C\uFF0C\u6539\u5199\u540E\u4E24\u7AEF\u70B9\u5747 200"
+  },
+  {
+    // ★ **DSH 的 Web GUI 环境说明句**（2026-10-29 本机二分定位，**上游尚未登记**）。
+    //
+    // ## 怎么发现的：前两条都已改写、整段仍 400 逼出来的第三条
+    //
+    // 0.5.2 上线后本机复验：真实 system 里身份首句与 `@` 文件引用句**都确认已改写**，
+    // 但**整段仍然 400**。行级二分 58 行 → 定位到这一行（1111 字符），
+    // 再前缀二分到**精确 221 字符**（220 放行）。
+    //
+    // ## 触发性（本机 2026-10-29，copilot.tencent.com，真实账号）
+    //
+    // | 探针 | 结果 |
+    // |---|---|
+    // | 该行整行（1111 字符） | ❌ 400 |
+    // | 改 `they mean this GUI` → `they mean the GUI` | ✅ **200（采用）** |
+    // | 改 `DeepSeek Harness Web GUI` → `… web interface` | ✅ 200 |
+    // | 改 `You are interacting` → `You are talking` | ✅ 200 |
+    //
+    // ⇒ 服务端认**逐字符长字面量**，改任一字符即放行。
+    //
+    // ## 为什么选「this GUI → the GUI」
+    //
+    // 三种改法都实测 200。选这一条因为**不碰专有名词、不改动词、句长几乎不变、
+    // 语义完全等同**（两者都指当前这个 GUI）。改 `Web GUI` 会动产品名形态，
+    // 改 `interacting` 会改语气 —— 都没必要。
+    //
+    // ⚠️ 已知边界（与 `@` 那条同型）：服务端认逐字符长字面量 ⇒ DSH 改动这句任一
+    // 字符，本规则会**静默停止匹配**（症状 = 该渠道整轮 400 复发）。
+    find: 'You are interacting with the user through the DeepSeek Harness Web GUI whose URL the runtime context names. When the user refers to "this page", "this GUI", or "this app" without naming another target, they mean this GUI.',
+    replace: 'You are interacting with the user through the DeepSeek Harness Web GUI whose URL the runtime context names. When the user refers to "this page", "the GUI", or "this app" without naming another target, they mean the GUI.',
+    note: "2026-10-29 \u672C\u673A\u4E8C\u5206\u5B9A\u4F4D\uFF08\u4E0A\u6E38\u5C1A\u672A\u767B\u8BB0\uFF09\uFF1A221 \u5B57\u7B26\u5B57\u9762\u91CF\u3001220 \u653E\u884C\uFF1B\u524D\u4E24\u6761\u5DF2\u6539\u5199\u4F46\u6574\u6BB5\u4ECD 400 \u65F6\u903C\u51FA\u6765\u7684\u7B2C\u4E09\u6761\uFF1B\u6539 this GUI\u2192the GUI \u5B9E\u6D4B 200"
   }
 ];
 function escapeRegExp(literal) {

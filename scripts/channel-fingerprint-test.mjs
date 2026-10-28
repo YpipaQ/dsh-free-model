@@ -97,10 +97,13 @@ await step('⑥ DSH 自己的 system 首句也被改写（2026-10-21 国内版�
   // 这条与其余几条来源不同：不是外部客户端注入，而是 **DeepSeek Harness 自己的**
   // agent 提示词开头 ⇒ 用 DSH 直连腾讯系渠道时**每一轮都带**，CodeBuddy 国内版
   // 整条渠道必然 400（与用户内容无关）。真机实测：原句 400、改 `running on` 后 200。
-  assert.match(packSource, /You are an AI agent powered by DeepSeek Harness\./,
-    '规则表应含 DSH 首句原文')
-  assert.match(packSource, /You are an AI agent running on DeepSeek Harness\./,
-    '规则表应含其改写形态')
+  // ⚠️ 2026-10-29 对齐上游 76d33062：`find` **不带末尾句点**、`replace` 改为
+  // `built on the DeepSeek Harness runtime`。带句点的写法会在 DSH 改标点时静默失效
+  // ⇒ 钉子只锚「不带句点的前 52 字符」，不锚句末标点。
+  assert.match(packSource, /You are an AI agent powered by DeepSeek Harness['"]/,
+    '规则表应含 DSH 首句原文（不带末尾句点）')
+  assert.match(packSource, /You are an AI agent built on the DeepSeek Harness runtime/,
+    '规则表应含其改写形态（对齐上游）')
 })
 
 await step('⑦ DSH 的 @ 文件引用说明句也被改写（2026-10-28 上游报障）', async () => {
@@ -112,6 +115,30 @@ await step('⑦ DSH 的 @ 文件引用说明句也被改写（2026-10-28 上游�
     '规则表应含 @ 文件引用说明句原文')
   assert.match(packSource, /Paths resolve relative to the workspace root/,
     '规则表应含其改写形态（只调语序）')
+})
+
+await step('⑧ DSH 的 Web GUI 环境说明句也被改写（2026-10-29 本机定位，上游未登记）', async () => {
+  // 这条是「前两条都已改写、整段仍 400」逼出来的第三条：
+  // 行级二分 58 行定位到该行（1111 字符）→ 前缀二分到 221 字符（220 放行）。
+  // 改 `they mean this GUI` → `they mean the GUI` 实测 200。
+  // ⚠️ 只锚**开头与结尾两段**（不锚整串）：服务端认逐字符字面量，
+  //    DSH 改动这句任一字符时，至少有一处失配会让这条变红。
+  assert.match(packSource, /You are interacting with the user through the DeepSeek Harness Web GUI/,
+    '规则表应含 Web GUI 句开头')
+  assert.match(packSource, /they mean the GUI/, '规则表应含其改写形态（the GUI）')
+  // ⚠️ 别断言「原文不该出现」—— `find` 里**必须**保留原结尾（那是要匹配的原文），
+  // 只有 `replace` 才改成 `the GUI`。这里断言两者**同时存在**（原文 + 改写形态）。
+  assert.match(packSource, /they mean this GUI\.'/,
+    '规则表应含原文结尾（find 必须写满，否则服务端认不全 ⇒ 空跑）')
+  // ⚠️⚠️ **必须断言「`replace` 里真的是 the GUI」** —— 只测「the GUI 出现在产物某处」
+  // 是无牙的：`find` 里本来就有 `this GUI`，把 replace 改回原文（等于没改）时
+  // 那种断言照样绿（2026-10-29 变异实测抓到的假绿）。
+  // 做法：截取 `replace:` 之后到 `note:` 之前的片段，再断言其中是 `the GUI`、
+  // 且**不含** `this GUI`。
+  const replSeg = packSource.match(/replace: 'You are interacting[\s\S]{0,400}?note:/)
+  assert.ok(replSeg, '应能截出该条的 replace 段')
+  assert.match(replSeg[0], /they mean the GUI/, 'replace 段应把 this GUI 改成 the GUI')
+  assert.doesNotMatch(replSeg[0], /they mean this GUI/, 'replace 段不应保留原结尾（等于没改）')
 })
 
 await step('⑤ 良性文本不被破坏', async () => {
