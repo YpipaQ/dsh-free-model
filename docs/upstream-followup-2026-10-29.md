@@ -159,3 +159,29 @@ the runtime context names. When the user refers to "this page", "this GUI", or
    长句规则的 `find` 与 `replace` 前缀高度相似，模糊断言必然无牙。
 2. **每次改完指纹规则，必须拿真实 system 跑一次真机** —— 不能只跑单测。
    单测只能证明「规则写了」，证明不了「够用」。本轮第三条就是这一步逼出来的。
+
+
+---
+
+## 十、B2 执行结果（2026-11-02）
+
+### 已搬（2/3）
+
+| 子项 | 状态 | 说明 |
+| --- | --- | --- |
+| **IKQ6HJ** 14018 额度耗尽 | ✅ 已做（`6e32155`） | 新增 `isCreditExhausted`/`creditExhaustedResetAtMs`/`explicitRateResetAtMs`；冷却终点改 **UTC+8 当日 24:00**；**推理腿与探测腿逐字同形**（上游对抗审计实测：两腿不同表达式会让同一条报文算出两个解禁时刻，用户点一次「重测」看到时间跳变 2099 vs 次日）；探测腿文案分出档次（额度耗尽不说「仍受限」） |
+| **IKQ8Y1** 工具参数归类 | ✅ 已做（`0654209`） | `sse.ts` 三分类 `ok/truncated/invalid` + 四个配套函数；`invalid` 报**不可重试**的 `TOOL_ARGS_INVALID`（旧实现报 `max-tokens`，而 UI 对该码有固定 i18n 把病因吞掉）；接入 `buddy-adapter` 与共享链路 `openai-compat`，均排在 `max-tokens` 之前 |
+| 凭据异常被吞成 `AUTH` | ⬜ **不适用** | 上游修的是 `index.ts` 的 `buddyLockedError`（「锁定永久积分 + 无可用账号」聚合错误出口）。**本 fork 没有这个函数** —— 那段属于被剥离的聚合/锁定车道，我们的调用链不会走到。 |
+
+### 本轮踩坑（都会改变以后做法）
+
+1. **往文件加 import 时插错了 import 块**：`openai-compat.ts` 有两个 import 块
+   （`@deepseek-ai/dsh-llm` 与 `./sse.js`），我把新名字插进了前者 ⇒ 产物报
+   `does not provide an export named 'classifyToolArguments'` ⇒ **一次打红 8 个套件**。
+   ⇒ 加 import 后**必须立刻重建 + 跑全量**，别等改完再跑。
+2. **真值表跑夹具 ≠ 测产品代码**：`channel-tool-args` 最初的真值表跑的是文件内联夹具，
+   源码把 `invalid` 改成 `truncated` 后**照样全绿**。⇒ 改为从源码抠出函数
+   `new Function` 真跑；变异实测才变红。
+3. **按花括号配对抠函数会被字符串骗**：函数体里有 `if (last !== '}')`，
+   那个 `}` 会被当成括号 ⇒ 截断在字符串中间 ⇒ 生成的 JS 非法。
+   ⇒ 抠函数**必须跟踪字符串/注释状态**。
