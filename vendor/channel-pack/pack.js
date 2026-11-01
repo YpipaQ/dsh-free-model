@@ -43851,7 +43851,16 @@ async function refreshAccountWithReconcile(params) {
   if (refreshed === void 0) {
     throw new Error(`${tag2} \u7EED\u671F\u54CD\u5E94\u7F3A\u5C11\u8BBF\u95EE\u4EE4\u724C\uFF0C\u51ED\u636E\u672A\u66F4\u65B0`);
   }
-  await save(refreshed);
+  try {
+    await save(refreshed);
+  } catch (error) {
+    params.warn?.(
+      `${tag2} \u8D26\u53F7 ${accountId} \u7EED\u671F**\u5DF2\u6210\u529F\u4F46\u843D\u76D8\u5931\u8D25**\uFF08${provider}\uFF09\uFF1A${error instanceof Error ? error.message : String(error)} \u21D2 refresh_token \u5DF2\u5728\u670D\u52A1\u7AEF\u88AB\u6D88\u8017\uFF0C\u672C\u5730\u51ED\u636E\u5DF2\u5931\u6548\uFF0C\u9700\u91CD\u65B0\u767B\u5F55`
+    );
+    throw params.makeTerminalError(
+      `${tag2} \u8D26\u53F7 ${accountId} \u7EED\u671F\u6210\u529F\u4F46**\u65B0\u51ED\u636E\u843D\u76D8\u5931\u8D25**\uFF1A${provider} \u7684 refresh_token \u662F\u4E00\u6B21\u6027\u7684\uFF0C\u670D\u52A1\u7AEF\u90A3\u4EFD\u5DF2\u88AB\u6D88\u8017\uFF0C\u672C\u5730\u4ECD\u505C\u7559\u5728\u65E7 token \u4E0A\uFF0C\u7EE7\u7EED\u91CD\u8BD5\u53EA\u4F1A\u5F97\u5230\u300C\u5DF2\u88AB\u4F7F\u7528\u300D\u21D2 \u5FC5\u987B\u91CD\u65B0\u767B\u5F55\u3002\u843D\u76D8\u9519\u8BEF\uFF1A${error instanceof Error ? error.message : String(error)}`
+    );
+  }
   await syncAccountExpiry({
     pool,
     provider,
@@ -44172,6 +44181,7 @@ var CodeArtsAuth = class extends Service {
           current: entry,
           refresh: (c) => this.refreshCredentialUnderLock(entry.credentialRef, c),
           save: (c) => this.ctx.credentials.set(ref, JSON.stringify(c)),
+          makeTerminalError: (message2) => new RefreshTokenExpiredError(message2),
           warn: (message2) => this.ctx.logger?.warn?.(message2),
           info: (message2) => this.ctx.logger?.info?.(message2)
         });
@@ -44540,6 +44550,7 @@ var BuddyAuth = class extends Service2 {
           current: entry,
           refresh: (c) => this.refreshCredential(c),
           save: (c) => this.ctx.credentials.set(ref, JSON.stringify(c)),
+          makeTerminalError: (message2) => new RefreshTokenExpiredError2(message2),
           warn: (message2) => this.ctx.logger?.warn?.(message2)
         });
       } catch (error) {
@@ -45231,6 +45242,7 @@ var LobsteraiAuth = class extends Service3 {
           current: entry,
           refresh: (c) => this.refreshCredential(c),
           save: (c) => this.ctx.credentials.set(ref, JSON.stringify(c)),
+          makeTerminalError: (message2) => new RefreshTokenExpiredError3(message2),
           warn: (message2) => this.ctx.logger?.warn?.(message2)
         });
       } catch (error) {
@@ -45743,6 +45755,7 @@ var QoderAuth = class extends Service4 {
           current: entry,
           refresh: (c) => this.refreshCredential(c),
           save: (c) => this.ctx.credentials.set(ref, JSON.stringify(c)),
+          makeTerminalError: (message2) => new RefreshTokenExpiredError4(message2),
           warn: (message2) => this.ctx.logger?.warn?.(message2)
         });
       } catch (error) {
@@ -46492,6 +46505,7 @@ var TraeAuth = class _TraeAuth extends Service5 {
           current: entry,
           refresh: (c) => this.refreshCredential(c),
           save: (c) => this.ctx.credentials.set(ref, JSON.stringify(c)),
+          makeTerminalError: (message2) => new RefreshTokenExpiredError5(message2),
           warn: (message2) => this.ctx.logger?.warn?.(message2)
         });
       } catch (error) {
@@ -47238,6 +47252,7 @@ var ClineAuth = class extends Service6 {
           current: entry,
           refresh: (c) => this.refreshCredential(c),
           save: (c) => this.ctx.credentials.set(ref, JSON.stringify(c)),
+          makeTerminalError: (message2) => new RefreshTokenExpiredError6(message2),
           warn: (message2) => this.ctx.logger?.warn?.(message2)
         });
       } catch (error) {
@@ -66305,6 +66320,7 @@ var MinimaxAuth = class extends Service10 {
       accessors: MINIMAX_EXPIRY_ACCESSORS,
       refresh: (c) => this.refreshCredentialFor(c),
       save: (c) => this.ctx.credentials.set(ref, JSON.stringify(c)),
+      makeTerminalError: (message2) => new MinimaxRefreshTokenExpiredError(message2),
       warn: (message2) => this.ctx.logger?.warn?.(message2),
       info: (message2) => this.ctx.logger?.info?.(message2)
     });
@@ -66346,6 +66362,7 @@ var MinimaxAuth = class extends Service10 {
           current: entry,
           refresh: (c) => this.refreshCredentialFor(c),
           save: (c) => this.ctx.credentials.set(ref, JSON.stringify(c)),
+          makeTerminalError: (message2) => new MinimaxRefreshTokenExpiredError(message2),
           warn: (message2) => this.ctx.logger?.warn?.(message2)
         });
       } catch (error) {
@@ -67658,6 +67675,7 @@ var GeminiAuth = class extends Service11 {
         accessors: GEMINI_EXPIRY_ACCESSORS,
         refresh: (c) => this.refreshCredential(c),
         save: (c) => this.ctx.credentials.set(ref, JSON.stringify(c)),
+        makeTerminalError: (message2) => new GeminiRefreshTokenExpiredError(message2),
         warn: (message2) => this.ctx.logger?.warn?.(message2),
         info: (message2) => this.ctx.logger?.info?.(message2)
       });
@@ -67705,6 +67723,7 @@ var GeminiAuth = class extends Service11 {
           current: entry,
           refresh: (c) => this.refreshCredentialUnderLock(entry.credentialRef, c),
           save: (c) => this.ctx.credentials.set(ref, JSON.stringify(c)),
+          makeTerminalError: (message2) => new GeminiRefreshTokenExpiredError(message2),
           warn: (message2) => this.ctx.logger?.warn?.(message2),
           info: (message2) => this.ctx.logger?.info?.(message2)
         });
@@ -68607,6 +68626,7 @@ var AccioAuth = class extends Service12 {
           current: entry,
           refresh: (c) => this.refreshCredentialUnderLock(entry.credentialRef, c),
           save: (c) => this.ctx.credentials.set(ref, JSON.stringify(c)),
+          makeTerminalError: (message2) => new AccioRefreshTokenExpiredError(message2),
           warn: (message2) => this.warn(message2),
           info: (message2) => this.ctx.logger?.info?.(message2)
         });

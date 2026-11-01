@@ -77,6 +77,8 @@ const suites = [
   ['channel-credit-exhausted', 'channel-credit-exhausted-test.mjs', []],
   // 工具参数三分类：掐断(truncated) vs 写坏(invalid) 处置相反；坏参数不可重试。
   ['channel-tool-args', 'channel-tool-args-test.mjs', []],
+  // 续期成功但落盘失败 = 终态；各家必须注入**自己那家**的错误类（跨模块 instanceof 恒 false）。
+  ['channel-expiry-terminal', 'channel-expiry-terminal-test.mjs', []],
   ['channel-network', 'channel-network-test.mjs', []],
 ].filter(([name]) => only === null || name.startsWith(only))
 

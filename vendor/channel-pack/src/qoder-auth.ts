@@ -478,6 +478,7 @@ export class QoderAuth extends Service {
           current: entry,
           refresh: (c) => this.refreshCredential(c),
           save: (c) => this.ctx.credentials.set(ref, JSON.stringify(c)),
+          makeTerminalError: (message) => new RefreshTokenExpiredError(message),
           warn: (message) => this.ctx.logger?.warn?.(message),
         })
       } catch (error) {
