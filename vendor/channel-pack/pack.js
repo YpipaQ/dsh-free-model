@@ -32349,6 +32349,95 @@ function isTruncatedArguments(raw) {
     return true;
   }
 }
+var COMPLETE_INVALID_LITERAL_RE = /^(?:NaN|-?Infinity|undefined)$/;
+var INVISIBLE_FORMAT_RE = /[\p{Cf}]/gu;
+function classifyToolArguments(raw) {
+  const trimmed = raw.trim();
+  if (trimmed.length === 0) return "ok";
+  try {
+    JSON.parse(trimmed);
+    return "ok";
+  } catch {
+  }
+  if (COMPLETE_INVALID_LITERAL_RE.test(trimmed)) return "invalid";
+  const visible = trimmed.replace(INVISIBLE_FORMAT_RE, "");
+  if (visible !== trimmed) {
+    try {
+      JSON.parse(visible);
+      return "truncated";
+    } catch {
+    }
+  }
+  const last = trimmed[trimmed.length - 1];
+  if (last !== "}" && last !== "]") return "truncated";
+  let braces = 0;
+  let brackets = 0;
+  let inString = false;
+  let escaped = false;
+  for (const ch of trimmed) {
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (ch === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (ch === '"') {
+      inString = !inString;
+      continue;
+    }
+    if (inString) continue;
+    if (ch === "{") braces += 1;
+    else if (ch === "}") {
+      braces -= 1;
+      if (braces < 0) return "truncated";
+    } else if (ch === "[") brackets += 1;
+    else if (ch === "]") {
+      brackets -= 1;
+      if (brackets < 0) return "truncated";
+    }
+  }
+  if (braces !== 0 || brackets !== 0) return "truncated";
+  if (inString) return "truncated";
+  return "invalid";
+}
+var TOOL_ARGS_INVALID_CODE = "TOOL_ARGS_INVALID";
+function isUsableToolArguments(raw) {
+  if (raw.trim().length === 0) return true;
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return false;
+  }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return false;
+  return true;
+}
+function toolArgsInvalidIsSoleOutput(invalidCount, emittedProse, blocks, upstreamTruncated) {
+  if (invalidCount === 0) return false;
+  if (upstreamTruncated) return false;
+  if (emittedProse !== "") return false;
+  for (const block of blocks) {
+    if (hasUsableToolName(block.name) && isUsableToolArguments(block.text)) return false;
+  }
+  return true;
+}
+function toolArgsInvalidBlocks(entries) {
+  const out = [];
+  for (const entry of entries) {
+    out.push({ name: entry.block.name, chars: entry.block.text.length });
+  }
+  return out;
+}
+function toolArgsInvalidFailure(blocks) {
+  const shown = blocks.slice(0, 3).map((block) => `${block.name ?? "(\u672A\u547D\u540D\u5DE5\u5177)"}\uFF0C${block.chars} \u5B57\u7B26`).join("\uFF1B");
+  const scope = blocks.length > 3 ? `${shown}\uFF1B\u7B49 ${blocks.length} \u4E2A\u8C03\u7528` : shown;
+  return {
+    message: `\u6A21\u578B\u751F\u6210\u7684\u5DE5\u5177\u53C2\u6570\u4E0D\u662F\u5408\u6CD5 JSON\uFF08${scope}\uFF09\uFF0C\u672C\u6B21\u8C03\u7528\u5DF2\u4E22\u5F03\u3002\u8FD9\u4E0D\u662F\u8F93\u51FA token \u4E0A\u9650\uFF0C\u4E5F\u4E0D\u662F\u7F51\u7EDC\u4E2D\u65AD \u2014\u2014 \u76F4\u63A5\u91CD\u8BD5\u5373\u53EF\uFF1B\u82E5\u8FDE\u7EED\u51FA\u73B0\uFF0C\u5EFA\u8BAE\u66F4\u6362\u6A21\u578B\u6216\u7F29\u5C0F\u8BE5\u6B21\u8C03\u7528\u7684\u8DE8\u5EA6\uFF08\u4F8B\u5982\u4E0A\u4E0B\u6587\u538B\u7F29\u7684 startId\u2013endId \u533A\u95F4\uFF09\u3002`,
+    code: TOOL_ARGS_INVALID_CODE
+  };
+}
 var REASONING_LOOP_CODE = "REASONING_LOOP";
 function resolveSliceChars(raw) {
   const value = raw ?? 64;
@@ -36122,6 +36211,7 @@ var BuddyAdapter = class _BuddyAdapter extends LlmAdapter2 {
       }
     }
     const argsTruncated = [...toolCalls.values()].some((block) => isTruncatedArguments(block.text));
+    const invalidArgEntries = [...toolCalls.values()].filter((block) => hasUsableToolName(block.name)).map((block) => ({ block, kind: classifyToolArguments(block.text) })).filter((entry) => entry.kind === "invalid");
     const droppedUnnamedCalls = [...toolCalls.values()].some((block) => !block.announced);
     const proseCutByStopString = finishReason2 === "stop" && toolOrder.length === 0 && isProseTruncatedByStopString(emittedProse);
     const reasoningLoopIsSoleOutput = loopDetected && emittedProse === "" && toolOrder.length === 0;
@@ -36129,7 +36219,12 @@ var BuddyAdapter = class _BuddyAdapter extends LlmAdapter2 {
       loopGuard?.diagnostics,
       options.maxTokens,
       "reasoning"
-    ) } : loopDetected ? { kind: "max-tokens" } : finishReason2 === "length" || finishReason2 === void 0 && toolOrder.length > 0 || argsTruncated || proseCutByStopString || droppedUnnamedCalls && toolOrder.length === 0 ? { kind: "max-tokens" } : finishReason2 === "tool_calls" || toolOrder.length > 0 ? { kind: "tool-calls" } : { kind: "stop" };
+    ) } : loopDetected ? { kind: "max-tokens" } : toolArgsInvalidIsSoleOutput(
+      invalidArgEntries.length,
+      emittedProse,
+      toolCalls.values(),
+      argsTruncated
+    ) ? { kind: "error", failure: toolArgsInvalidFailure(toolArgsInvalidBlocks(invalidArgEntries)) } : finishReason2 === "length" || finishReason2 === void 0 && toolOrder.length > 0 || argsTruncated || proseCutByStopString || droppedUnnamedCalls && toolOrder.length === 0 ? { kind: "max-tokens" } : finishReason2 === "tool_calls" || toolOrder.length > 0 ? { kind: "tool-calls" } : { kind: "stop" };
     yield { type: "finish", reason: resolveEmptyResponseReason(reason, blockCount) };
   }
 };
@@ -38866,6 +38961,7 @@ async function* consumeOpenAiSse(response, options, config) {
     }
   }
   const argsTruncated = [...toolCalls.values()].some((block) => isTruncatedArguments(block.text));
+  const invalidArgEntries = [...toolCalls.values()].filter((block) => hasUsableToolName(block.name)).map((block) => ({ block, kind: classifyToolArguments(block.text) })).filter((entry) => entry.kind === "invalid");
   const incompleteTools = finishReason2 === void 0 && toolOrder.length > 0;
   const droppedUnnamedCalls = [...toolCalls.values()].some((block) => !block.announced);
   if (!sawDataFrame) {
@@ -38884,7 +38980,12 @@ async function* consumeOpenAiSse(response, options, config) {
     loopGuard?.diagnostics,
     config.maxTokens,
     "reasoning"
-  ) } : loopDetected ? { kind: "max-tokens" } : finishReason2 === "length" || incompleteTools || truncatedStream || argsTruncated || proseCutByStopString || droppedUnnamedCalls && toolOrder.length === 0 ? { kind: "max-tokens" } : finishReason2 === "tool_calls" || toolOrder.length > 0 ? { kind: "tool-calls" } : { kind: "stop" };
+  ) } : loopDetected ? { kind: "max-tokens" } : toolArgsInvalidIsSoleOutput(
+    invalidArgEntries.length,
+    emittedProse,
+    toolCalls.values(),
+    truncatedStream
+  ) ? { kind: "error", failure: toolArgsInvalidFailure(toolArgsInvalidBlocks(invalidArgEntries)) } : finishReason2 === "length" || incompleteTools || truncatedStream || argsTruncated || proseCutByStopString || droppedUnnamedCalls && toolOrder.length === 0 ? { kind: "max-tokens" } : finishReason2 === "tool_calls" || toolOrder.length > 0 ? { kind: "tool-calls" } : { kind: "stop" };
   yield { type: "finish", reason: resolveEmptyResponseReason(reason, blockCount) };
 }
 

@@ -42,7 +42,7 @@ import type { BuddyCredential, BuddyRemoteModel } from './buddy.js'
 import { CODEBUDDY, resolveUserAgent, type BuddyFallbackModel, type BuddyProduct } from './product.js'
 import { normalizeHarnessMessages } from './message-shape.js'
 import { projectRequestImage, type ImageRequestTarget } from './image-budget.js'
-import { createBlankReasoningSuppressor, createReasoningLoopDetector, hasUsableToolName, isProseTruncatedByStopString, isReasoningLoopGuardEnabled, isTruncatedArguments, normalizeToolArguments, readWithIdleTimeout, reasoningLoopFailure, resolveEmptyResponseReason, resolveToolPairing, splitThinkTaggedContent, stripBareThinkCloseTagIfEnabled, stripCourseLeakFromHistoryContent, stripCourseLeakIfEnabled } from './sse.js'
+import { classifyToolArguments, createBlankReasoningSuppressor, createReasoningLoopDetector, hasUsableToolName, isProseTruncatedByStopString, isReasoningLoopGuardEnabled, isTruncatedArguments, normalizeToolArguments, readWithIdleTimeout, reasoningLoopFailure, resolveEmptyResponseReason, resolveToolPairing, splitThinkTaggedContent, stripBareThinkCloseTagIfEnabled, stripCourseLeakFromHistoryContent, stripCourseLeakIfEnabled, toolArgsInvalidBlocks, toolArgsInvalidFailure, toolArgsInvalidIsSoleOutput } from './sse.js'
 import {
   registerAdapterIdempotent,
 } from './llm-register-compat.js'
@@ -2567,6 +2567,17 @@ export class BuddyAdapter extends LlmAdapter {
     //   并陷入重试循环。判定为截断后 dsh 丢弃残缺调用并重试，实测一次即恢复。
     const argsTruncated = [...toolCalls.values()].some(block => isTruncatedArguments(block.text))
     /**
+     * **模型把工具参数写坏**（结构闭合配平但 JSON 非法）—— 与「流被掐断」分开处置
+     * （gitee IKQ8Y1；本 fork 2026-11-02 移植）。
+     *
+     * ⚠️ 只收**名字可用**的块：无名块的参数没有意义（它本来就会被丢弃）。
+     * ⚠️ 判据见 `classifyToolArguments` 的三分语义；这里取 `invalid` 档。
+     */
+    const invalidArgEntries = [...toolCalls.values()]
+      .filter((block) => hasUsableToolName(block.name))
+      .map((block) => ({ block, kind: classifyToolArguments(block.text) }))
+      .filter((entry) => entry.kind === 'invalid')
+    /**
      * 是否丢弃过**名称不可用**的 tool-call 块（见上方 tool_calls 分支）。
      *
      * 丢弃是对的（无名调用无法执行、留着会污染会话），但不能让它**静默地以
@@ -2610,6 +2621,15 @@ export class BuddyAdapter extends LlmAdapter {
       // 循环命中但另有可见产出：只能报 max-tokens（保住内容），不能报 error。
       : loopDetected
         ? { kind: 'max-tokens' as const }
+      // ⚠️⚠️ **坏参数必须排在 `max-tokens` 之前**（gitee IKQ8Y1）：
+      // 旧实现把「参数完整但 JSON 非法」也归 `max-tokens`，而 UI 对该码的固定
+      // i18n 是「已达到输出 token 上限」，把「模型把参数写坏了」误导成「额度用满」
+      // ⇒ 用户去查账号/等额度/降档，**都不会好**（实测受害轮次 outputTokens=2516，
+      // 上限 128000，额度远没用满）。
+      : toolArgsInvalidIsSoleOutput(
+          invalidArgEntries.length, emittedProse, toolCalls.values(), argsTruncated,
+        )
+        ? { kind: 'error' as const, failure: toolArgsInvalidFailure(toolArgsInvalidBlocks(invalidArgEntries)) }
       : finishReason === 'length'
         || finishReason === undefined && toolOrder.length > 0
         || argsTruncated

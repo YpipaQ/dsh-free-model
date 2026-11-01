@@ -37,6 +37,7 @@
 import { LlmError, ToolCallId } from '@deepseek-ai/dsh-llm'
 import type { StreamChunk } from '@deepseek-ai/dsh-llm'
 import {
+  classifyToolArguments,
   createBlankReasoningSuppressor,
   createReasoningLoopDetector,
   hasUsableToolName,
@@ -52,6 +53,9 @@ import {
   stripBareThinkCloseTagIfEnabled,
   stripCourseLeakFromHistoryContent,
   stripCourseLeakIfEnabled,
+  toolArgsInvalidBlocks,
+  toolArgsInvalidFailure,
+  toolArgsInvalidIsSoleOutput,
 } from './sse.js'
 import { normalizeHarnessMessages } from './message-shape.js'
 import { isBillingBusinessCode, looksLikeBillingError, parseQueueError, queueDelayMs } from './model-queue.js'
@@ -1088,6 +1092,18 @@ export async function* consumeOpenAiSse(
   // 报告 tool-calls 会让 harness 执行缺参调用并报 schema 错误，
   // 模型收到莫名错误后陷入重试循环；报告 max-tokens 则丢弃并重试。
   const argsTruncated = [...toolCalls.values()].some(block => isTruncatedArguments(block.text))
+  /**
+   * **模型把工具参数写坏**（结构闭合配平但 JSON 非法）—— 与「流被掐断」分开处置
+   * （gitee IKQ8Y1；本 fork 2026-11-02 移植）。
+   *
+   * ⚠️ 这是**共享**链路（`openai-compat` 被多家 provider 复用）⇒ 本判据的覆盖面
+   * 比单家适配器更宽；改动前请读 `sse.ts` 的 `classifyToolArguments`。
+   * ⚠️ 只收**名字可用**的块：无名块的参数没有意义（本来就会被丢弃）。
+   */
+  const invalidArgEntries = [...toolCalls.values()]
+    .filter((block) => hasUsableToolName(block.name))
+    .map((block) => ({ block, kind: classifyToolArguments(block.text) }))
+    .filter((entry) => entry.kind === 'invalid')
   const incompleteTools = finishReason === undefined && toolOrder.length > 0
   /**
    * 是否丢弃过**名称不可用**的 tool-call 块（见上方 tool_calls 分支）。
@@ -1196,6 +1212,13 @@ export async function* consumeOpenAiSse(
     // 不能报 error（会丢内容）。见上面 `reasoningLoopIsSoleOutput` 的表格。
     : loopDetected
       ? { kind: 'max-tokens' as const }
+    // ⚠️⚠️ **坏参数必须排在 `max-tokens` 之前**（gitee IKQ8Y1）：UI 对
+    // `max-tokens` 只有固定 i18n「已达到输出 token 上限」，会把「模型把参数写坏」
+    // 误导成「额度用满」。判据与 `buddy-adapter.ts` 同源（`sse.ts` 的三分分类）。
+    : toolArgsInvalidIsSoleOutput(
+        invalidArgEntries.length, emittedProse, toolCalls.values(), truncatedStream,
+      )
+      ? { kind: 'error' as const, failure: toolArgsInvalidFailure(toolArgsInvalidBlocks(invalidArgEntries)) }
     : finishReason === 'length'
     || incompleteTools
     || truncatedStream

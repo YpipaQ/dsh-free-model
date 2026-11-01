@@ -75,6 +75,8 @@ const suites = [
   ['channel-fingerprint', 'channel-fingerprint-test.mjs', []],
   // 额度耗尽（14018）与频率限流共用 429 但冷却终点相反；两条腿（推理/探测）必须同形。
   ['channel-credit-exhausted', 'channel-credit-exhausted-test.mjs', []],
+  // 工具参数三分类：掐断(truncated) vs 写坏(invalid) 处置相反；坏参数不可重试。
+  ['channel-tool-args', 'channel-tool-args-test.mjs', []],
   ['channel-network', 'channel-network-test.mjs', []],
 ].filter(([name]) => only === null || name.startsWith(only))
 

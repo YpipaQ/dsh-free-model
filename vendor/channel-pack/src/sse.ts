@@ -333,6 +333,211 @@ export function isTruncatedArguments(raw: string): boolean {
 }
 
 /**
+ * 工具参数的**三分**分类（gitee IKQ8Y1，本 fork 2026-11-02 移植）。
+ *
+ * `isTruncatedArguments` 只答「能不能 JSON.parse」⇒ 把「流被掐断」与「模型把
+ * 参数写坏」混为一谈。两者的**处置方向相反**：
+ *
+ * | 分类 | 含义 | 处置 |
+ * |---|---|---|
+ * | `truncated` | 分片丢失 / 输出被截断（参数**不完整**）| 重试（同模型再来一次通常能补全）|
+ * | `invalid` | 参数**完整**但 JSON 非法（模型语法写坏）| 不可重试，如实报错 |
+ *
+ * ## ⚠️ 为什么必须分开（真实缺陷）
+ *
+ * 旧实现在 `invalid` 时也报 `max-tokens`，而 DSH 客户端对 `max-tokens` 只有一句
+ * **固定 i18n**（「已达到输出 token 上限 / 回答被截断…发送"继续"」），**不读
+ * 适配器的任何 message** ⇒ 真正病因被吞掉，用户被引向「额度用满」这条错误处置
+ * （查账号、等额度、降思考档、怀疑渠道），**都不会好**。实测受害轮次
+ * `usage.outputTokens = 2516`（上限 128000）—— 额度远没用满。
+ *
+ * 与本仓库既有结论同族：`AUTH` 吞 message（IKLBSH）、思考死循环曾复用
+ * `max-tokens`（已改 `REASONING_LOOP_CODE`）。本条是同一家族第三个成员。
+ */
+export type ToolArgumentsClass = 'ok' | 'truncated' | 'invalid'
+
+/**
+ * `NaN` / `Infinity` / `undefined` —— **写法完整、语义非法**。
+ *
+ * 它们的末字符不是 `}` / `]`，会撞上「末字符腿」被判 `truncated`，
+ * 但结构其实是**完整**的：模型写的就是 `NaN`，重试大概率原样复现
+ * ⇒ 归 `invalid` 才自洽（上游对抗审计实测：裸 `NaN` 曾被判 `truncated`）。
+ */
+const COMPLETE_INVALID_LITERAL_RE = /^(?:NaN|-?Infinity|undefined)$/
+
+/**
+ * **判定用**：剥掉 Unicode `Cf` 类格式字符（零宽空格 `U+200B`、零宽连字等）。
+ *
+ * ⚠️ `String.prototype.trim()` 只剥空白类，不碰 `Cf`。于是 `\u200b{"a":1}`
+ * （模型写对了、传输环节混入零宽字符）会 parse 失败且末字符是 `}`
+ * ⇒ 被判 `invalid` ⇒「模型把参数写坏了」—— 这是**归因错**：模型输出没问题，
+ * 错在不可见字符，处置应重试而非换模型。
+ *
+ * ⚠️ 只用于**判定**，绝不用于产出：落盘参数仍是原文（改写输出会让工具真的
+ * 收到被改过的参数）。
+ * ⚠️ `Cf` 有 160+ 个码点，**必须按 Unicode 类别处理，不能枚举**。
+ */
+const INVISIBLE_FORMAT_RE = /[\p{Cf}]/gu
+
+/**
+ * 把工具参数原文分成 `ok` / `truncated` / `invalid` 三档。
+ *
+ * 判据顺序（**不可颠倒**）：
+ * ① 空串 ⇒ `ok`（无参数工具的合法形态，如 `list_dir` 只下发空分片）；
+ * ② 能 `JSON.parse` ⇒ `ok`；
+ * ③ 完整非法字面量（`NaN`/`Infinity`/`undefined`）⇒ `invalid`；
+ * ④ **不可见字符污染**：原文 parse 失败但剥 `Cf` 后 parse 成功 ⇒ `truncated`
+ *    （重试，**不**给模型定罪）；
+ * ⑤ 末字符不是 `}` / `]` ⇒ 必然被掐断 ⇒ `truncated`；
+ * ⑥ 跳过字符串字面量统计括号嵌套；深度转负 / 不配平 ⇒ `truncated`；
+ * ⑦ 收尾却仍在字符串里 ⇒ fail-safe 判 `truncated`；
+ * ⑧ 闭合配平引号成对却仍 parse 失败 ⇒ 模型语法写坏 ⇒ `invalid`。
+ */
+export function classifyToolArguments(raw: string): ToolArgumentsClass {
+  const trimmed = raw.trim()
+  if (trimmed.length === 0) return 'ok'
+  try {
+    JSON.parse(trimmed)
+    return 'ok'
+  } catch {
+    // 继续判「掐断 vs 写坏」
+  }
+  if (COMPLETE_INVALID_LITERAL_RE.test(trimmed)) return 'invalid'
+  // ⚠️ **不得**用带 `g` 标志的 `INVISIBLE_FORMAT_RE.test()` 做探测：`g` 正则的
+  // `lastIndex` 会跨调用残留，同一函数内连测两次会得到**交替**的 true/false
+  // （JS 里最经典的假守卫来源之一）。故用一次 `replace` 的结果判断有无变化。
+  const visible = trimmed.replace(INVISIBLE_FORMAT_RE, '')
+  if (visible !== trimmed) {
+    try {
+      JSON.parse(visible)
+      return 'truncated'
+    } catch {
+      // 剥了也 parse 不了 ⇒ 污染不是唯一问题，按结构继续判
+    }
+  }
+  const last = trimmed[trimmed.length - 1]
+  if (last !== '}' && last !== ']') return 'truncated'
+  // ⚠️ 转义必须**先判 `\`**：`"\""` 里的 `\"` 不能让引号翻转状态，否则后半段
+  // 全被当成「在字符串里」而漏掉括号。`\\` 同理。
+  let braces = 0
+  let brackets = 0
+  let inString = false
+  let escaped = false
+  for (const ch of trimmed) {
+    if (escaped) { escaped = false; continue }
+    if (ch === '\\') { escaped = true; continue }
+    if (ch === '"') { inString = !inString; continue }
+    if (inString) continue
+    if (ch === '{') braces += 1
+    else if (ch === '}') {
+      braces -= 1
+      if (braces < 0) return 'truncated'
+    } else if (ch === '[') brackets += 1
+    else if (ch === ']') {
+      brackets -= 1
+      if (brackets < 0) return 'truncated'
+    }
+  }
+  if (braces !== 0 || brackets !== 0) return 'truncated'
+  if (inString) return 'truncated'
+  return 'invalid'
+}
+
+export const TOOL_ARGS_INVALID_CODE = 'TOOL_ARGS_INVALID'
+
+/**
+ * 参数是否是**可执行**的参数包（不只是「能 JSON.parse」）。
+ *
+ * ## ⚠️⚠️ 为什么不能用 `classifyToolArguments(...) === 'ok'`（上游对抗审计实测的真缺陷）
+ *
+ * `classifyToolArguments` 答的是「这段字节是不是合法 JSON」，而 `ok` 里**包含
+ * JSON 标量**：`123` / `"abc"` / `null` / `true` / `[]` / `[1,2]` 全返回 `ok`。
+ * 但接入点拿 `=== 'ok'` 判「**另一个可用调用**」—— 参数为 `123` 的调用并不是
+ * 可用调用 ⇒ 坏块 + 标量调用的组合会漏判成 `max-tokens`（本该 `TOOL_ARGS_INVALID`）。
+ *
+ * ⚠️ `normalizeToolArguments` 会把标量/数组兜底成 `{}`，故 harness **不会**真的
+ * 执行参数为 `123` 的调用；它拿到 `arguments:"{}"` ⇒ 报 missing required property
+ * ⇒ 模型收到莫名参数错误后重试。**症状没消失，只是换了条出口**，
+ * 且我们失去了「模型把参数写坏了」这个有分辨力的归因。
+ */
+export function isUsableToolArguments(raw: string): boolean {
+  if (raw.trim().length === 0) return true
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch {
+    return false
+  }
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return false
+  return true
+}
+
+/**
+ * 本次输出是否**只剩**「坏参数块」—— 即 `TOOL_ARGS_INVALID` 该抢占归因的判据。
+ *
+ * 四个条件全部满足才返回 true（任一不满足就该按原分类走）：
+ * ① 至少一个坏块；
+ * ② 上游没判截断（`upstreamTruncated` —— 真截断时归 `max-tokens` 是对的）；
+ * ③ 本轮**没有**吐过正文（有正文说明模型在正常产出，不该把整轮判成参数坏）；
+ * ④ **没有**任何「名字可用 + 参数可用」的调用（否则坏块只是局部问题，
+ *    放弃整轮会误伤能执行的那部分）。
+ */
+export function toolArgsInvalidIsSoleOutput(
+  invalidCount: number,
+  emittedProse: string,
+  blocks: Iterable<{ readonly name?: string; readonly text: string }>,
+  upstreamTruncated: boolean,
+): boolean {
+  if (invalidCount === 0) return false
+  if (upstreamTruncated) return false
+  if (emittedProse !== '') return false
+  for (const block of blocks) {
+    if (hasUsableToolName(block.name) && isUsableToolArguments(block.text)) return false
+  }
+  return true
+}
+
+/** 把被判 invalid 的坏块映射成 {@link toolArgsInvalidFailure} 的入参（已脱敏，只留名字与长度）。 */
+export function toolArgsInvalidBlocks(
+  entries: Iterable<{ readonly block: { readonly name?: string; readonly text: string } }>,
+): Array<{ name: string | undefined; chars: number }> {
+  const out: Array<{ name: string | undefined; chars: number }> = []
+  for (const entry of entries) {
+    out.push({ name: entry.block.name, chars: entry.block.text.length })
+  }
+  return out
+}
+
+/**
+ * 「工具参数不是合法 JSON」的**错误出口**。
+ *
+ * ⚠️ 错误码取 `TOOL_ARGS_INVALID`（**不可重试**，不在 harness 的
+ * `DEFAULT_RETRYABLE_CODES` 里）：白退避 5 次只会再烧一轮额度，而模型这一次的
+ * 输出形态**大概率原样复现**（同一个工具、同一个坏字符位）。
+ * ⚠️ 也不能取 `max-tokens`（客户端会替换成固定 i18n 把病因吞掉）、
+ * 不能取 `AUTH` / `QUOTA` / `ACCOUNT_QUOTA`（同样被文案替换）。
+ *
+ * ⚠️ 文案**必须说清「这不是 token 上限、也不是网络中断」** —— 否则用户仍会按
+ * 旧 i18n 的暗示去查额度。
+ */
+export function toolArgsInvalidFailure(
+  blocks: readonly { readonly name: string | undefined; readonly chars: number }[],
+): { message: string; code: string } {
+  const shown = blocks.slice(0, 3)
+    .map((block) => `${block.name ?? '(未命名工具)'}，${block.chars} 字符`)
+    .join('；')
+  const scope = blocks.length > 3 ? `${shown}；等 ${blocks.length} 个调用` : shown
+  return {
+    message:
+      `模型生成的工具参数不是合法 JSON（${scope}），本次调用已丢弃。`
+      + `这不是输出 token 上限，也不是网络中断 —— 直接重试即可；`
+      + `若连续出现，建议更换模型或缩小该次调用的跨度`
+      + `（例如上下文压缩的 startId–endId 区间）。`,
+    code: TOOL_ARGS_INVALID_CODE,
+  }
+}
+
+/**
  * 思考死循环中止的**错误码**。
  *
  * ## 为什么不复用 `max-tokens`（真实缺陷，Gitee !IKIZNK）
