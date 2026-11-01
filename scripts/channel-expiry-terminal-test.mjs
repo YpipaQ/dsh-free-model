@@ -121,5 +121,21 @@ await step('⑤ 接线点数量与调用点数量一致（防漏接）', async (
   assert.equal(wires, callSites, `接线数(${wires})应与调用点数(${callSites})一致（漏接会静默死号）`)
 })
 
+await step('⑥ STS5.1806 必须是终态，且 error_code 与 error_msg **两条腿都在**', async () => {
+  // 一次性 refresh_token 已被消费的专属码。漏判 ⇒ 非终态 ⇒ refreshable 永真
+  // ⇒ 每轮拿同一份已消耗 token 去兑换 ⇒ 静默死号。
+  // ⚠️ 两条腿必须都在：上游实测「只写 error_code 腿」时，删掉它用例仍全绿
+  //（msg 兜底完全遮盖）⇒ 假守卫。这里逐条独立断言。
+  const oauthSrc = read('vendor/channel-pack/src/oauth.ts')
+  assert.match(oauthSrc, /errorCode\.includes\('STS5\.1806'\)/,
+    'error_code 腿必须在（缺它时只有 msg 兜底，报文一变就漏）')
+  assert.match(oauthSrc, /refresh\\s\*token\\s\+has\\s\+been\\s\+used/i,
+    'error_msg 腿必须在（error_code 缺失时靠正文兜底）')
+  // 两条腿必须都归到同一个终态出口
+  const seg = oauthSrc.slice(oauthSrc.indexOf("errorCode.includes('STS5.1806')"))
+  assert.match(seg.slice(0, 400), /throw new RefreshTokenExpiredError/,
+    'STS5.1806 必须抛终态错误（不是普通 Error）')
+})
+
 if (failed > 0) { console.error(`\nchannel-expiry-terminal: ${failed} 项失败`); process.exit(1) }
 console.log('\nchannel-expiry-terminal: 全部通过')

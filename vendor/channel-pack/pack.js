@@ -893,7 +893,7 @@ async function requestToken(body, keyPair, fetcher = fetch) {
   if (!response.ok || !data?.credentials) {
     const message2 = `CodeArts token request failed: ${response.status}${data ? ` ${JSON.stringify(data)}` : ""}`;
     const errorCode = String(data?.error_code ?? "");
-    if (data?.error === "invalid_grant" || errorCode.includes("ExpiredRefreshToken")) {
+    if (data?.error === "invalid_grant" || errorCode.includes("ExpiredRefreshToken") || errorCode.includes("STS5.1806") || /refresh\s*token\s+has\s+been\s+used/i.test(message2)) {
       throw new RefreshTokenExpiredError(message2);
     }
     throw new Error(message2);

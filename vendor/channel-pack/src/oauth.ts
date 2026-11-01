@@ -135,6 +135,33 @@ export async function requestToken(
     if (
       data?.error === 'invalid_grant'
       || errorCode.includes('ExpiredRefreshToken')
+      // ⚠️⚠️ **`STS5.1806` 必须是终态**（上游 7167acb0 第 2 项，本 fork 2026-11-02 移植）
+      //
+      // 它是「一次性 token 已被消费」的专属错误码：
+      // `{"error_code":"STS5.1806","error_msg":"invalid refresh token: 'the
+      // refresh token has been used'"}`。华为 STS 的 refresh_token **一次性轮换**，
+      // 一旦被兑换过就**永久失效** —— 重试一万次还是同一报文。
+      //
+      // ## 为什么漏判会造成「静默死号」而非报错
+      //
+      // 落到 `throw new Error(message)`（非终态）时：各家 `refreshAll` 的 catch
+      // 把它当临时故障 ⇒ 只记 warn、**不标 `refreshable: false`** ⇒ 下一轮继续
+      // 拿同一份已消耗的 token 去兑换 ⇒ 再撞 1806 ⇒ 日志被去重、面板照常显示
+      // 「自动续期」⇒ 用户只有主动用才看到 400。
+      //
+      // 本 fork 有**真机证据**：2026-10-19 officeace 那次日志里就是
+      // `STS5.1806 invalid refresh token: 'decode jwt header failed'`（当时那是
+      // 测试污染，但这个码本身的语义是确定的）。
+      //
+      // ## ⚠️ 两条腿**必须都在**（上游实测的变异陷阱）
+      //
+      // 首版只写了 `error_code` 腿；变异验证时删掉它，用例**仍全绿** —— 因为
+      // `error_msg` 那条兜底把它完全遮盖了。⇒ 两条腿的报文**刻意互不重叠**，
+      // 各自有用例锁住，才不是假守卫。
+      || errorCode.includes('STS5.1806')
+      // 中文/英文报文腿：`error_code` 缺失时靠正文兜底
+      //（`invalid refresh token: 'the refresh token has been used'`）
+      || /refresh\s*token\s+has\s+been\s+used/i.test(message)
     ) {
       throw new RefreshTokenExpiredError(message)
     }
