@@ -63079,6 +63079,7 @@ function registerChannelPackEndpoints(ctx, pool, codearts, buddy, workbuddy, lob
         let catalog;
         if (all !== void 0) {
           catalog = [...all];
+          catalog = [...all];
           const known = new Set(catalog.map((model) => model.id));
           for (const id of Object.keys(disabledMap)) {
             if (disabledMap[id] === true && !known.has(id)) catalog.push({ id, name: id });

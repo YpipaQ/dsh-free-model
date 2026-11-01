@@ -3845,7 +3845,24 @@ function registerChannelPackEndpoints(
         let catalog: Array<{ id: string; name: string; isFree?: boolean }>
         if (all !== undefined) {
           catalog = [...all]
-          // 全量目录里若仍有黑名单命中却缺失者，一并补上（保底，正常不会发生）。
+          catalog = [...all]
+          // 全量目录里若仍有黑名单命中却缺失者，一并补上 —— **必须以全量目录为界**。
+          //
+          // ## 为什么必须卡这个边界（上游 7167acb0 第 5 项描述过的缺陷，本 fork 无此问题）
+          //
+          // 若无条件补回黑名单条目，上游**已下架**但用户曾关掉过的模型会永久留在
+          // 设置页：灰暗、开关能动、点开必然 404（上游实测 GLM-5 / glm-5.3-flash）。
+          //
+          // ⚠️ **本 fork 的这段实现本来就已经正确**：`known` 取自 `all`
+          //（`listAllModels()`，即全量在售目录）⇒ 不在其中的 id 不会被补回。
+          // 此处登记这段注释是为了**防止以后有人「简化」成无条件补回**，
+          // 不是因为本 fork 曾出过这个 bug。
+          //
+          // ## ⚠️⚠️ 判据必须是 `listAllModels()`，**不能**用 `llm.listModels()`
+          //
+          // 后者已被适配器按黑名单过滤 —— 拿它当「在售集合」会把**每一个被用户
+          // 关掉的在售模型**都判成已下架 ⇒ 集体从设置页消失、无法重新打开
+          //（上游第一版就是这么错的，被 7 条既有用例当场打红）。
           const known = new Set(catalog.map((model) => model.id))
           for (const id of Object.keys(disabledMap)) {
             if (disabledMap[id] === true && !known.has(id)) catalog.push({ id, name: id })
