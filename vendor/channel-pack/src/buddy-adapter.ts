@@ -22,6 +22,9 @@ import { RemoteCatalogGate } from './remote-catalog-gate.js'
 import { settingsNamespaceFor } from './settings-compat.js'
 import {
   RATE_LIMIT_FALLBACK_MS,
+  creditExhaustedResetAtMs,
+  explicitRateResetAtMs,
+  isCreditExhausted,
   isModelSaturationError,
   isRateLimited,
   parseRateLimitError,
@@ -1913,10 +1916,25 @@ export class BuddyAdapter extends LlmAdapter {
             && !rateLimitMarked.has(currentAccountId)) {
             rateLimitMarked.add(currentAccountId)
             const parsed = parseRateLimitError(errorText, options.model, response.status)
+            // ⚠️⚠️ **额度耗尽（14018）与频率限流共用 HTTP 429，但冷却终点相反**
+            // （gitee IKQ6HJ，本 fork 2026-10-29 移植）：限流是分钟级滚动窗口（1h
+            // 兜底没问题），额度耗尽要**等次日配额/充值** —— 写成 1h 会让账号
+            // **每小时被重新选中一次、必然再失败一次**（用户侧：「面板说可以用了，
+            // 一试又不行」，循环往复）。
+            //
+            // ⚠️⚠️ **必须与探测腿（`account-probe.ts`）逐字同形**：那里是
+            // `explicitRateResetAtMs(message) ?? creditExhaustedResetAtMs()`。
+            // 两条腿写不同表达式 ⇒ 同一条报文算出两个解禁时刻 ⇒ 用户点一次
+            // 「重测」就看到时间跳变（上游对抗审计实测：2099 vs 次日）。
+            const creditExhausted = isCreditExhausted(errorText)
+            const resetAtMs = creditExhausted
+              // 服务端若真给了显式时刻，仍以它为准（与限流同口径）
+              ? explicitRateResetAtMs(errorText) ?? creditExhaustedResetAtMs()
+              : parsed?.resetTimeMs ?? Date.now() + RATE_LIMIT_FALLBACK_MS
             await this.options.accountPool.updateModelRateLimit(
               currentAccountId,
               parsed?.modelId ?? options.model,
-              parsed?.resetTimeMs ?? Date.now() + RATE_LIMIT_FALLBACK_MS,
+              resetAtMs,
             )
           }
           // 取下一个未尝试过的可用账号（同样按本产品 id 过滤，否则 WorkBuddy

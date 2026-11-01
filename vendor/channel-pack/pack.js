@@ -34465,6 +34465,48 @@ function isRateLimited(body, status) {
 }
 var RESET_TIME_PATTERN = /(?:将在|reset at)\s+([\d-]+\s+[\d:]+)\s+(UTC[+-]\d+(?::\d+)?)/i;
 var RATE_LIMIT_FALLBACK_MS = 36e5;
+var CREDIT_EXHAUSTED_BUSINESS_CODE = 14018;
+var CREDIT_EXHAUSTED_PATTERN = /credits?\s+exhausted|quota\s+exhausted|积分.{0,4}(?:不足|耗尽|用尽)|额度.{0,4}(?:不足|耗尽|用尽)|余额.{0,4}(?:不足|耗尽|用尽)/i;
+function isCreditExhausted(body) {
+  if (body.length === 0) return false;
+  try {
+    const data = JSON.parse(body);
+    const inner = typeof data.error === "object" && data.error !== null ? data.error : void 0;
+    const nested = typeof inner?.data === "object" && inner.data !== null ? inner.data : void 0;
+    const codes = [data.code, inner?.code, nested?.code];
+    if (codes.some((code) => code === CREDIT_EXHAUSTED_BUSINESS_CODE || code === String(CREDIT_EXHAUSTED_BUSINESS_CODE))) {
+      return true;
+    }
+  } catch {
+  }
+  return CREDIT_EXHAUSTED_PATTERN.test(body);
+}
+function creditExhaustedResetAtMs(nowMs = Date.now()) {
+  return nextUtc8DayStartMs(nowMs);
+}
+function explicitRateResetAtMs(body) {
+  try {
+    const data = JSON.parse(body);
+    const inner = typeof data.error === "object" && data.error !== null ? data.error : void 0;
+    const nested = typeof inner?.data === "object" && inner.data !== null ? inner.data : void 0;
+    const candidates = [data.msg, inner?.msg, nested?.msg];
+    for (const candidate of candidates) {
+      if (typeof candidate !== "string") continue;
+      const resetMatch = RESET_TIME_PATTERN.exec(candidate);
+      if (!resetMatch) continue;
+      const resetMs = Date.parse(`${resetMatch[1]} ${resetMatch[2]}`);
+      if (!Number.isNaN(resetMs)) return resetMs;
+    }
+    return void 0;
+  } catch {
+    const bareMatch = RESET_TIME_PATTERN.exec(body);
+    if (bareMatch !== null) {
+      const bareMs = Date.parse(`${bareMatch[1]} ${bareMatch[2]}`);
+      if (!Number.isNaN(bareMs)) return bareMs;
+    }
+    return void 0;
+  }
+}
 function parseRateLimitError(body, currentModel, status) {
   const fallback = () => ({
     modelId: currentModel,
@@ -35733,10 +35775,12 @@ var BuddyAdapter = class _BuddyAdapter extends LlmAdapter2 {
           if (currentAccountId !== "" && isRateLimited(errorText, response.status) && !rateLimitMarked.has(currentAccountId)) {
             rateLimitMarked.add(currentAccountId);
             const parsed = parseRateLimitError(errorText, options.model, response.status);
+            const creditExhausted = isCreditExhausted(errorText);
+            const resetAtMs = creditExhausted ? explicitRateResetAtMs(errorText) ?? creditExhaustedResetAtMs() : parsed?.resetTimeMs ?? Date.now() + RATE_LIMIT_FALLBACK_MS;
             await this.options.accountPool.updateModelRateLimit(
               currentAccountId,
               parsed?.modelId ?? options.model,
-              parsed?.resetTimeMs ?? Date.now() + RATE_LIMIT_FALLBACK_MS
+              resetAtMs
             );
           }
           const next = await this.options.accountPool.getAvailableAccount(
@@ -59370,6 +59414,16 @@ async function probeWithAdapter(entry, credential, modelId, timeoutMs) {
     const message2 = error instanceof Error ? error.message : String(error);
     if (isRateLimitFailure(error)) {
       const parsed = parseRateLimitError(message2, modelId);
+      const creditExhausted = isCreditExhausted(message2);
+      if (creditExhausted) {
+        const resetMs = explicitRateResetAtMs(message2) ?? creditExhaustedResetAtMs();
+        return {
+          modelId,
+          ok: false,
+          message: `\u989D\u5EA6\u5DF2\u8017\u5C3D\uFF08\u4E0D\u662F\u9650\u6D41\uFF09\uFF1A${message2}\u3002\u6062\u590D\u8981\u9760**\u6B21\u65E5\u914D\u989D**\u6216\u5145\u503C\uFF0C\u4E0D\u662F\u7B49\u4E00\u4F1A\u513F \u2014\u2014 \u8BE5\u8D26\u53F7\u5728\u989D\u5EA6\u6062\u590D\u524D\u4E0D\u53EF\u7528\u3002`,
+          resetTimeMs: resetMs
+        };
+      }
       return {
         modelId,
         ok: false,

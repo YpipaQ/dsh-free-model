@@ -37,7 +37,14 @@ import { QoderAdapter } from './qoder-adapter.js'
 import { ClineAdapter } from './cline-adapter.js'
 import { ZcodeAdapter } from './zcode-adapter.js'
 import { TraeAdapter } from './trae-adapter.js'
-import { CodeArtsAdapter, isRateLimited, parseRateLimitError } from './llm-adapter.js'
+import {
+  CodeArtsAdapter,
+  creditExhaustedResetAtMs,
+  explicitRateResetAtMs,
+  isCreditExhausted,
+  isRateLimited,
+  parseRateLimitError,
+} from './llm-adapter.js'
 import { productById } from './product.js'
 import { lobsteraiProductById } from './lobsterai-product.js'
 import { qoderProductById } from './qoder-product.js'
@@ -375,6 +382,40 @@ async function probeWithAdapter(
       // 旧值过期后 UI 就不再渲染「限额重置」（表现为"重测说仍受限、卡片却没有"）。
       // 解析失败（文案无时间）时不带该字段，调用方按「无法确认」处理、保留原标记。
       const parsed = parseRateLimitError(message, modelId)
+      // ⚠️⚠️ **额度耗尽（14018）不能用 `parseRateLimitError` 的 1 小时兜底**
+      // （gitee IKQ6HJ，本 fork 2026-10-29 移植）：它的报文里没有时间字段，而那
+      // 1 小时会让账号**每小时被重新选中一次、必然再失败一次**（用户侧症状
+      // 「面板说可以用了，一试又不行」）。
+      //
+      // ⚠️⚠️ **两条腿必须逐字同形**（上游对抗审计实测的真缺陷）：
+      // 推理腿（`buddy-adapter.ts`）算的是
+      // `explicitRateResetAtMs(errorText) ?? creditExhaustedResetAtMs()`，
+      // 本处必须写**同一个表达式** —— 只写后一半的话，同一条报文
+      //（14018 码 + 显式 `reset at` 时刻）会在两条腿上算出两个解禁时刻，
+      // 用户点一次「重测」就看到时间跳变（实测 2099 vs 次日）。
+      //
+      // ⚠️ 为什么不抽成共用函数：探测层**不得**反向 import `buddy-adapter.ts`
+      // （`account-probe-adapter.spec.ts` 会 `vi.mock` 它，让导出一起变 undefined）。
+      // 共享原语已都在 `llm-adapter.ts` ⇒ 两处写同一表达式是本仓库约束下的最优解。
+      const creditExhausted = isCreditExhausted(message)
+      if (creditExhausted) {
+        // ⚠️ **额度耗尽不能只说「仍受限」**：那个词把用户引向「等一会儿再试」，
+        // 而真实出路是「等次日配额或充值」—— 两者在上游是**完全不同的恢复机制**，
+        // 文案必须分出档次。
+        //
+        // ⚠️ 文案**不断言「已按 …… 设置」**（本仓库红线）：`updateModelRateLimit`
+        // 的语义是「只接受更长的时刻」（`current >= resetAtMs` 时静默忽略），
+        // 探测层**无从知道**这次写入是否真生效 ⇒ 只说事实，实际时刻交给 UI 的
+        // `resetTimeMs` 徽章。
+        const resetMs = explicitRateResetAtMs(message) ?? creditExhaustedResetAtMs()
+        return {
+          modelId,
+          ok: false,
+          message: `额度已耗尽（不是限流）：${message}。`
+            + `恢复要靠**次日配额**或充值，不是等一会儿 —— 该账号在额度恢复前不可用。`,
+          resetTimeMs: resetMs,
+        }
+      }
       return {
         modelId,
         ok: false,

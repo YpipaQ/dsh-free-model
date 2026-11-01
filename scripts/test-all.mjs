@@ -73,6 +73,8 @@ const suites = [
   ['channel-buddy-conv', 'channel-buddy-conv-test.mjs', []],
   // 腾讯系内容指纹改写：assistant 正文那格一旦漏改，带毒历史每轮重放 ⇒ 会话报废。
   ['channel-fingerprint', 'channel-fingerprint-test.mjs', []],
+  // 额度耗尽（14018）与频率限流共用 429 但冷却终点相反；两条腿（推理/探测）必须同形。
+  ['channel-credit-exhausted', 'channel-credit-exhausted-test.mjs', []],
   ['channel-network', 'channel-network-test.mjs', []],
 ].filter(([name]) => only === null || name.startsWith(only))
 
