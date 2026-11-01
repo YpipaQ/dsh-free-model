@@ -173,4 +173,48 @@ assert.equal(String(raccoonResolved.reasoning.defaultEffort), 'on',
   'raccoon 默认档必须仍是 on（顺序调整不得让它翻成 off）')
 console.log('ok  raccoon 档位顺序 = [off, on] 且默认档仍为 on')
 
-console.log('\nchannel-model-metadata: 6/6 项通过')
+// ── 目录解析：带版本后缀的模型不得被静默吞掉（上游 7167acb0 第 3 项 / IKQY27）──
+{
+  // 上游把「旧版」与「带日期的新版」当成**两个独立条目**同时下发。修前用
+  // `normalizeModelId(rawId)` 做 id **与去重键** ⇒ `X-1017` 被改写成 `X`、
+  // 撞 seen 后静默丢弃 ⇒ 用户看到「IDE 已更新，插件列表没更新」且零提示。
+  // ⚠️ 两段式：① 源码级断言钉住「id 与去重键都用原始 rawId」（抓「改回归一化」）；
+  // ② 用**等价内联实现**跑行为真值表（抓「语义不对」）。
+  // 不从 `models.ts` 直接 import：它是 TS，本套件没带 --experimental-strip-types。
+  const modelsSrc = fs.readFileSync(
+    new URL('../vendor/channel-pack/src/models.ts', import.meta.url), 'utf8')
+  assert.match(modelsSrc, /const id = rawId/,
+    'parseModelInfo 的 id 必须是**原始 rawId**（不能是 normalizeModelId(rawId)）')
+  assert.match(modelsSrc, /if \(seen\.has\(id\)\) return undefined\n  seen\.add\(id\)/,
+    'seen 的键也必须是原始 id（用归一后的会把两条并成一条）')
+  assert.doesNotMatch(modelsSrc, /const id = normalizeModelId\(rawId\)/,
+    '不得退回「id = 归一化结果」（那会静默吞掉带版本号的条目）')
+  // 等价实现（与源码同语义）：id/去重键都用原始值
+  const parseModelInfoForTest = (m, seen) => {
+    const rawId = m['model_id']
+    if (typeof rawId !== 'string' || rawId.length === 0) return undefined
+    const id = rawId
+    if (id.includes('-VL-') || id.endsWith('-VL')) return undefined
+    const rawName = m['model_name']
+    const name = typeof rawName === 'string' && rawName.length > 0 ? rawName : id
+    if (seen.has(id)) return undefined
+    seen.add(id)
+    return { id, name }
+  }
+  const seen = new Set()
+  const entries = [
+    { model_id: 'deepseek-v4.1-flash', model_name: 'DeepSeek-V4.1-Flash' },
+    { model_id: 'deepseek-v4.1-flash-1017', model_name: 'DeepSeek-V4.1-Flash-1017' },
+  ]
+  const parsed = entries.map((e) => parseModelInfoForTest(e, seen)).filter(Boolean)
+  assert.equal(parsed.length, 2,
+    `并存的两条都必须保留（带版本号那条曾被静默丢弃），实得 ${parsed.length} 条: `
+    + JSON.stringify(parsed.map((p) => p.id)))
+  assert.ok(parsed.some((p) => p.id === 'deepseek-v4.1-flash-1017'),
+    '带版本号的 id 必须原样保留（它是独立模型）')
+  assert.ok(parsed.some((p) => p.name.includes('1017')),
+    '展示名也必须保留版本号（否则与旧版同名、无法区分）')
+  console.log('ok  目录解析：并存旧版与 -1017 时两条都保留（不静默吞掉）')
+}
+
+console.log('\nchannel-model-metadata: 7/7 项通过')

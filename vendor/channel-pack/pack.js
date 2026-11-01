@@ -29339,10 +29339,10 @@ function normalizeModelId(id) {
 function parseModelInfo(m, seen) {
   const rawId = m["model_id"];
   if (typeof rawId !== "string" || rawId.length === 0) return void 0;
-  const id = normalizeModelId(rawId);
+  const id = rawId;
   if (id.includes("-VL-") || id.endsWith("-VL")) return void 0;
   const rawName = m["model_name"];
-  const name2 = typeof rawName === "string" && rawName.length > 0 ? normalizeModelId(rawName) : id;
+  const name2 = typeof rawName === "string" && rawName.length > 0 ? rawName : id;
   if (seen.has(id)) return void 0;
   seen.add(id);
   return { id, name: name2 };

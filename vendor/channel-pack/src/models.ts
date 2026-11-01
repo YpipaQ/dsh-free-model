@@ -110,16 +110,56 @@ export function normalizeModelId(id: string): string {
   return id
 }
 
+/**
+ * ⚠️ **仅供离线套件调用**的包装（不参与运行时逻辑）。
+ *
+ * `parseModelInfo` 是内部函数、不随产物导出，而它的「带版本后缀条目不得被
+ * 静默吞掉」这条语义（上游 IKQY27）**必须有行为级守卫** —— 只做源码级断言
+ * 抓不住「id 与去重键是不是同一个值」这类错误。
+ * ⇒ 暴露一个最小包装给 `scripts/channel-model-metadata-test.mjs`。
+ */
+export function parseModelInfoForTest(
+  m: Record<string, unknown>,
+  seen: Set<string>,
+): { id: string; name: string } | undefined {
+  return parseModelInfo(m, seen)
+}
+
 function parseModelInfo(m: Record<string, unknown>, seen: Set<string>): RemoteModel | undefined {
   const rawId = m['model_id']
   if (typeof rawId !== 'string' || rawId.length === 0) return undefined
-  const id = normalizeModelId(rawId)
+  /**
+   * ⚠️⚠️ **对外 id 用原始 `model_id`，不裁版本后缀**（上游 7167acb0 第 3 项 /
+   * issue IKQY27，本 fork 2026-11-02 移植）。
+   *
+   * 上游把「旧版」与「带日期的新版」当成**两个独立条目**同时下发（实测
+   * `deepseek-v4.1-flash` 与 `deepseek-v4.1-flash-1017` 并存，两者 `model_type`
+   * 都是 `admin`、`context` 都是 1048576、网页端是两个独立可点选项，两条真实
+   * 请求分别回显各自 id）。
+   *
+   * 修前这里用 `normalizeModelId(rawId)` 的产物做 id **与去重键** ⇒ 带版本号的
+   * 那条被改写成长版 id、撞 `seen` 后**静默丢弃** ⇒ 用户看到「IDE 已更新 1017，
+   * 插件列表没更新」，且**零提示**。
+   *
+   * ⚠️ **`seen` 的键也必须是 rawId** —— 用归一后的 id 会把两条并成一条。
+   * ⚠️ 不能图省事「永远不剥」：`gateway/config` 下发 `deepseek-v4-flash-0731`
+   * 而 chat 端点只认 `deepseek-v4-flash`，不剥就 404 not registered
+   *（见 `CODEARTS_BENEFIT_FALLBACK` 的实证）。两条需求靠「id 用原始值、
+   * 发送时再按需剥」区分，而不是在解析层二选一。
+   *
+   * ⚠️ `normalizeModelId(id)` 的**旧签名行为刻意保留**：它仍被 benefit 判定的
+   * 「是否被改写」比较使用（`normalizeModelId(rawId) === rawId`）。改成「永不剥」
+   * 会让那句恒真，进而把带后缀的 benefit 模型误记入落盘集合。
+   */
+  const id = rawId
   // 过滤视觉（VL）多模态模型
   // id 含 -VL- 或以 -VL 结尾（如 Qwen3-VL-235B），上下文小、不支持工具调用，
   // 不适合当 agent 主模型，从列表隐藏；只通过 analyzeImage 等工具间接调用。
   if (id.includes('-VL-') || id.endsWith('-VL')) return undefined
   const rawName = m['model_name']
-  const name = typeof rawName === 'string' && rawName.length > 0 ? normalizeModelId(rawName) : id
+  // ⚠️ 展示名也**不裁版本后缀**：`DeepSeek-V4.1-Flash-1017` 里的 `1017` 正是
+  // 用户要看的版本信息（裁掉就与旧版同名、无法区分）。
+  const name = typeof rawName === 'string' && rawName.length > 0 ? rawName : id
   if (seen.has(id)) return undefined
   seen.add(id)
   return { id, name }
