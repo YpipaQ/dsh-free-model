@@ -105,7 +105,27 @@ export interface ZcodeTextBlock {
  * @param options.model 模型名（进 environment 段的 poweredByLine）。
  */
 export function buildZcodeSystemBlocks(
-  callerSystem: string | undefined,
+  /**
+   * ⚠️⚠️ **调用方 system 不再进 system 块数组**（上游 9893e916，本 fork 2026-11-02 移植）。
+   *
+   * ## 实验判据（上游三轮对照，同一账号/URL/18 个请求头，**只改请求体**）
+   *
+   * | system 块数 | 结果 |
+   * |---|---|
+   * | **3 块**（42 + 2590 + 253） | ✅ HTTP 200 |
+   * | **4 块**（第 4 块 = 调用方 system，2 062 字符） | ❌ **HTTP 405 + 3012** |
+   * | 4 块（同上，25 428 字符） | ❌ HTTP 405 + 3012 |
+   * | 3 块 + 调用方内容改放进 messages | ✅ HTTP 200 |
+   *
+   * ⇒ **判据是「块数」，与第 4 块多长无关**（2 062 字符照样 405）。
+   *   上游检查的是「system 数组的形状像不像官方客户端」——官方恒为 3 类
+   *   （cli_prefix + stable + dynamic），追加第 4 块当即不再像。
+   *
+   * ⚠️ 此前本函数的注释写着「调用方内容必须追加在最后、官方身份块必须在开头
+   *   （上游检查前缀结构）」—— **那个理由是错的**，已由上述实验推翻。
+   *
+   * ⇒ 调用方 system 改用 {@link withCallerSystem} 注入到 **messages**（首条 user）。
+   */
   options: {
     cwd: string
     provider?: string
@@ -121,9 +141,6 @@ export function buildZcodeSystemBlocks(
     { type: 'text', text: stable },
     { type: 'text', text: buildEnvironmentSection(options) },
   ]
-  if (typeof callerSystem === 'string' && callerSystem.trim().length > 0) {
-    blocks.push({ type: 'text', text: callerSystem })
-  }
   /**
    * ★ **只在最后一块**打 prompt caching 断点（2026-09-30 调整；此前是每块都打）。
    *
@@ -153,6 +170,52 @@ export function buildZcodeSystemBlocks(
   const last = blocks[blocks.length - 1]
   if (last !== undefined) last.cache_control = ephemeral
   return blocks
+}
+
+/**
+ * 把**调用方 system** 注入到 `messages`（首条 user 消息的 content 末尾追加一个 text 块）。
+ *
+ * ## 为什么不再放进 system 块数组（上游 9893e916，本 fork 2026-11-02 移植）
+ *
+ * `system` 数组必须**恒为 3 块**（cli_prefix + stable + dynamic）—— 官方客户端就是
+ * 这个形状。追加第 4 块（哪怕是调用方 system）会让上游回 `HTTP 405 + 3012
+ * unusual activity`。实验判据是**块数**、与第 4 块多长**无关**（实测 2 062 字符照样 405）。
+ *
+ * ## 落点与幂等
+ *
+ * - **落点**：首条消息若已是 user 就用它，否则取第一条 user；
+ * - **幂等**只看落点那条**消息**（不是「全局找一遍」）—— 后者会在多轮里把同一条
+ *   caller 重复计入。
+ */
+export function withCallerSystem(
+  messages: readonly Record<string, unknown>[],
+  callerSystem: string | undefined,
+): Array<Record<string, unknown>> {
+  const out = messages.map((message) => ({ ...message }))
+  if (typeof callerSystem !== 'string' || callerSystem.trim().length === 0) return out
+  const first = out[0]
+  const targetIndex = first !== undefined && first.role === 'user'
+    ? 0
+    : out.findIndex((message) => message.role === 'user')
+  if (targetIndex < 0) return out
+  const target = out[targetIndex]
+  if (target === undefined) return out
+
+  const block: ZcodeTextBlock = { type: 'text', text: callerSystem }
+  const content = target.content
+  if (Array.isArray(content)) {
+    const already = content.some(
+      (item) => (item as { text?: unknown } | undefined)?.text === callerSystem,
+    )
+    if (already) return out
+    target.content = [...content, block]
+  } else if (typeof content === 'string') {
+    if (content === callerSystem) return out
+    target.content = [{ type: 'text', text: content }, block]
+  } else {
+    target.content = [block]
+  }
+  return out
 }
 
 /**

@@ -54648,7 +54648,7 @@ var OFFICIAL_STABLE_SECTIONS = [
   '# ZCode Desktop Context\n\n### Files & URLs\n- Return local web URLs as Markdown links (e.g., [label](http://127.0.0.1:8080)).\n- File should be an absolute path or include the workspace folder segment so it can be resolved relative to the workspace.\n- Unless otherwise specified, return local file references as Markdown links (e.g., [name.md](/absolute/path/to/name.md)).\n\n### Inline Code Comments\n- Use the ::code-comment{...} directive when you need to attach feedback directly to specific code lines.\n- Emit one directive per inline comment; emit none when there are no actionable inline comments.\n- Required attributes: title (short label), body (one-paragraph explanation), file (path to the file).\n- Optional attributes: start, end (1-based line numbers), priority (0-3).\n- file should be an absolute path or include the workspace folder segment so it can be resolved relative to the workspace.\n- Keep line ranges tight; end defaults to start.\n- Example: ::code-comment{title="[P2] Off-by-one" body="Loop iterates past the end when length is 0." file="/path/to/foo.ts" start=10 end=11 priority=2}',
   "# Working style\n\nWhen you have enough information to act, act. Do not re-derive facts already established in the conversation, re-litigate a decision the user has already made, or narrate options you will not pursue. If you are weighing a choice, give a recommendation, not an exhaustive survey. Prefer reading the actual file or running the actual command over reasoning about what it probably contains. When a signal pattern-matches to a known failure, check that the evidence actually supports that specific diagnosis before acting on it."
 ];
-function buildZcodeSystemBlocks(callerSystem, options) {
+function buildZcodeSystemBlocks(options) {
   const ephemeral = { type: "ephemeral" };
   const stable = OFFICIAL_STABLE_SECTIONS.join("\n\n");
   const blocks = [
@@ -54656,12 +54656,33 @@ function buildZcodeSystemBlocks(callerSystem, options) {
     { type: "text", text: stable },
     { type: "text", text: buildEnvironmentSection(options) }
   ];
-  if (typeof callerSystem === "string" && callerSystem.trim().length > 0) {
-    blocks.push({ type: "text", text: callerSystem });
-  }
   const last = blocks[blocks.length - 1];
   if (last !== void 0) last.cache_control = ephemeral;
   return blocks;
+}
+function withCallerSystem(messages, callerSystem) {
+  const out = messages.map((message2) => ({ ...message2 }));
+  if (typeof callerSystem !== "string" || callerSystem.trim().length === 0) return out;
+  const first = out[0];
+  const targetIndex = first !== void 0 && first.role === "user" ? 0 : out.findIndex((message2) => message2.role === "user");
+  if (targetIndex < 0) return out;
+  const target = out[targetIndex];
+  if (target === void 0) return out;
+  const block = { type: "text", text: callerSystem };
+  const content = target.content;
+  if (Array.isArray(content)) {
+    const already = content.some(
+      (item) => item?.text === callerSystem
+    );
+    if (already) return out;
+    target.content = [...content, block];
+  } else if (typeof content === "string") {
+    if (content === callerSystem) return out;
+    target.content = [{ type: "text", text: content }, block];
+  } else {
+    target.content = [block];
+  }
+  return out;
 }
 function buildEnvironmentSection(options) {
   const cwd = options.cwd.trim().length > 0 ? options.cwd : ".";
@@ -55579,8 +55600,16 @@ var ZcodeAdapter = class extends LlmAdapter9 {
     if (activeAccountId !== void 0 && activeAccountId.length > 0) tried.add(activeAccountId);
     let credential = await this.resolveCredentialOrThrow(options);
     const wire = serializeMessages4(options.messages, imageUrls);
-    const messages = withContextPrefix(toAnthropicMessages(wire));
-    const system = buildZcodeSystemBlocks(options.system, {
+    const messages = withCallerSystem(
+      // ⚠️ **`withContextPrefix` 不能省**：它负责首轮 user 消息的 `<system-reminder>`
+      // 日期块（官方如此）。上游的正确组合是
+      // `withCallerSystem(withContextPrefix(toAnthropicMessages(wire)), system)` ——
+      // 我第一版只写了 `withCallerSystem(toAnthropicMessages(wire), …)` 会**丢掉日期块**
+      //（虽然实测该块不是 3012 判据，但它是官方形状的一部分）。
+      withContextPrefix(toAnthropicMessages(wire)),
+      options.system
+    );
+    const system = buildZcodeSystemBlocks({
       cwd: process.cwd(),
       provider: this.product.id,
       model: options.model
@@ -73708,6 +73737,7 @@ function apply(ctx, config = {}) {
 export {
   Config,
   apply,
+  buildZcodeSystemBlocks,
   channelProxyBypassed,
   createChannelFetch,
   inject,
@@ -73715,5 +73745,6 @@ export {
   makeReadImageRequest,
   name,
   parseWindowsProxy,
-  serializeTraeMessagesForTest
+  serializeTraeMessagesForTest,
+  withCallerSystem
 };

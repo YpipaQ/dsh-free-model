@@ -85,6 +85,8 @@ const suites = [
   ['channel-accio-rotate', 'channel-accio-rotate-test.mjs', []],
   // TRAE 多 tool_call 时工具结果图片必须排在全部 tool 之后（否则 4027 会话永久损坏）。
   ['channel-trae-image-order', 'channel-trae-image-order-test.mjs', []],
+  // ZCode：system 数组恒 3 块（第 4 块 ⇒ 405+3012），调用方 system 走 messages。
+  ['channel-zcode-system-blocks', 'channel-zcode-system-blocks-test.mjs', []],
   ['channel-network', 'channel-network-test.mjs', []],
 ].filter(([name]) => only === null || name.startsWith(only))
 

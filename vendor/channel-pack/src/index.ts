@@ -96,6 +96,10 @@ export { createChannelFetch, parseWindowsProxy, channelProxyBypassed } from './c
 // 「多 tool_call 时工具结果图片必须排在全部 tool 之后」这条语义只能靠出站报文验证，
 // 而走 `stream()` 会先撞模型能力门（图片能力来自远端目录）⇒ 离线桩造不动。
 export { serializeTraeMessagesForTest } from './trae-adapter.js'
+// ⚠️ **仅供离线套件**：ZCode 的 system 块构造与调用方 system 注入。
+// 「system 数组恒为 3 块」是上游实测的硬约束（第 4 块 ⇒ 405 + 3012），
+// 只能靠产出物验证，故暴露给套件直接调用。
+export { buildZcodeSystemBlocks, withCallerSystem } from './zcode-identity.js'
 import { execFile } from 'node:child_process'
 
 /**

@@ -78,6 +78,7 @@ import {
 } from './zcode-transport.js'
 import {
   buildZcodeSystemBlocks,
+  withCallerSystem,
   withContextPrefix,
 } from './zcode-identity.js'
 import {
@@ -803,8 +804,19 @@ export class ZcodeAdapter extends LlmAdapter {
      *   - `tools` 是**扁平** `input_schema` 形态（不是 OpenAI 的嵌套 `function`）
      */
     const wire = serializeMessages(options.messages, imageUrls)
-    const messages = withContextPrefix(toAnthropicMessages(wire))
-    const system = buildZcodeSystemBlocks(options.system, {
+    // ⚠️ 调用方 system 注入 **messages**（不是 system 数组），且必须在
+    // `toAnthropicMessages` 之后、`withContextPrefix` 之前/后都可以（这里保持与上游
+    // 同次序：先 toAnthropic，再注入 caller，再打上下文前缀）。
+    const messages = withCallerSystem(
+      // ⚠️ **`withContextPrefix` 不能省**：它负责首轮 user 消息的 `<system-reminder>`
+      // 日期块（官方如此）。上游的正确组合是
+      // `withCallerSystem(withContextPrefix(toAnthropicMessages(wire)), system)` ——
+      // 我第一版只写了 `withCallerSystem(toAnthropicMessages(wire), …)` 会**丢掉日期块**
+      //（虽然实测该块不是 3012 判据，但它是官方形状的一部分）。
+      withContextPrefix(toAnthropicMessages(wire)),
+      options.system,
+    )
+    const system = buildZcodeSystemBlocks({
       cwd: process.cwd(),
       provider: this.product.id,
       model: options.model,
