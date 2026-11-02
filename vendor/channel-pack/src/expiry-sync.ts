@@ -52,6 +52,31 @@ export interface ExpiryAccessors<TCredential> {
   /** access_token 的过期时刻（毫秒）；`undefined` 表示凭据里读不到。 */
   expiresAtOf: (credential: TCredential) => number | undefined
   /**
+   * **refresh_token 自己的过期时刻**（毫秒）；`undefined` 表示读不到 / 该渠道无此概念。
+   *
+   * ## ⚠️ 为什么需要这条腿（上游 577b27a7，issue 实测两账号同日报废）
+   *
+   * 华为 STS 的 `refresh_token` JWT 里 `exp` **恒等于「登录时刻 + 30 天」，续期
+   * **不**延长它**；而 `access_token` 寿命恒为 2 小时。⇒ 最后一天两侧严重不对称：
+   *
+   * - lead-time 最早放行时刻 = access 到期 − 60m
+   * - 实测某账号 20:05:48 才放行，而 refresh **19:59:58 就死了** ⇒ 差 5.8 分钟
+   *   ⇒ 那次续期「成功得太晚」，随后的 refresh 已只剩 54 分钟寿命 ⇒ 报废。
+   *
+   * ⇒ 判据必须**两条腿取「或」**（任一条进入告警区间就续期，两条腿都能被拉满）。
+   *
+   * ## ⚠️⚠️ 取「与」会**制造**新缺陷
+   *
+   * refresh 剩 3 天、access 剩 2 分钟（**正常态**）时取「与」反而不续 ⇒ access
+   * 一过期账号就报废，而此刻 refresh 明明还活着。
+   *
+   * ## 其余渠道零影响
+   *
+   * 不提供本腿时判据退化为**单腿**（与改动前逐字节相同）。其余几家的 refresh 都
+   * 比 access 长（buddy 14 天 / cline 30 天 / minimax 30 天）⇒ 补这腿无影响。
+   */
+  refreshExpiresAtOf?: (credential: TCredential) => number | undefined
+  /**
    * 凭据是否仍可续期。
    *
    * ⚠️ **不提供时只同步 `expiresAt`、绝不碰 `refreshable`**。Loomy 必须走这条：
@@ -86,9 +111,28 @@ const EXPIRY_TOLERANCE_MS = 1000
  *
  * @param expiresAtMs 凭据 access_token 的过期时刻；`undefined` 一律视为需要刷。
  */
-export function shouldRefreshNow(expiresAtMs: number | undefined, nowMs = Date.now()): boolean {
+export function shouldRefreshNow(
+  expiresAtMs: number | undefined,
+  nowMs = Date.now(),
+  /**
+   * **refresh_token 自己的过期时刻**（可选第三参，见 {@link ExpiryAccessors.refreshExpiresAtOf}）。
+   *
+   * ⚠️ 两条腿取**「或」**：任一进入告警区间就续期。
+   * 取「与」会把「refresh 还有 3 天、access 只剩 2 分钟」这个**正常态**判成不用续
+   * ⇒ access 一过期账号报废，而 refresh 明明还活着（上游 577b27a7 明列的陷阱）。
+   *
+   * ⚠️ 不传时行为**与改动前逐字节相同**（其余各家 refresh 都比 access 长，无需此腿）。
+   */
+  refreshExpiresAtMs?: number,
+): boolean {
   if (expiresAtMs === undefined || !Number.isFinite(expiresAtMs)) return true
-  return expiresAtMs - nowMs <= REFRESH_LEAD_MS
+  if (expiresAtMs - nowMs <= REFRESH_LEAD_MS) return true
+  // refresh 寿命腿（可选）：同样用 lead-time 判据，两腿取「或」
+  if (refreshExpiresAtMs !== undefined && Number.isFinite(refreshExpiresAtMs)
+    && refreshExpiresAtMs - nowMs <= REFRESH_LEAD_MS) {
+    return true
+  }
+  return false
 }
 
 /**

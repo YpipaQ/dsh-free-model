@@ -137,5 +137,41 @@ await step('⑥ STS5.1806 必须是终态，且 error_code 与 error_msg **两�
     'STS5.1806 必须抛终态错误（不是普通 Error）')
 })
 
+await step('⑦ refresh 寿命腿：两腿取「或」，且不传时行为不变（上游 577b27a7）', async () => {
+  // 华为 STS 的 refresh_token exp 恒等于「登录 + 30 天」、续期不延长；access 恒 2 小时
+  // ⇒ 最后一天窗口窄到可能「续期成功得太晚」（实测差 5.8 分钟）⇒ 账号报废。
+  assert.match(expirySrc, /refreshExpiresAtOf\?: /,
+    'ExpiryAccessors 应有可选 refreshExpiresAtOf 腿')
+  const shouldSrc = expirySrc.slice(expirySrc.indexOf('export function shouldRefreshNow'))
+  // 取「或」：access 到期 或 refresh 到期，任一进 lead 窗口就续
+  assert.match(shouldSrc, /if \(expiresAtMs - nowMs <= REFRESH_LEAD_MS\) return true/,
+    'access 腿应单独 return true（「或」语义）')
+  assert.match(shouldSrc, /refreshExpiresAtMs - nowMs <= REFRESH_LEAD_MS/,
+    'refresh 腿也应单独 return true（「或」语义）')
+  // ⚠️ 不得写成「两腿都满足」才返回 true（那会把「refresh 剩 3 天、access 剩 2 分钟」
+  // 这个正常态误判成不用续 ⇒ access 过期即报废）
+  // ⚠️ 精确判据：两腿之间**不得**出现 `&&`（发现「与」就红）。
+  // 注意不能用宽窗口正则（会把两条独立语句之间的注释也算进来，造成假红/假绿）。
+  const accessLine = shouldSrc.indexOf('if (expiresAtMs - nowMs <= REFRESH_LEAD_MS) return true')
+  const refreshLine = shouldSrc.indexOf('refreshExpiresAtMs - nowMs <= REFRESH_LEAD_MS')
+  assert.ok(accessLine > 0 && refreshLine > accessLine, '两条腿都应在，且 access 腿在前')
+  // ⚠️ 精确到「access 的 return true」与「refresh 的 if 开头」之间 —— 那段只允许
+  // 注释。refresh 腿**内部**的 `!== undefined && Number.isFinite(...)` 是必要的前置
+  // 守卫（防 `undefined` 与 `NaN`），不是「两腿取与」，不能被误伤。
+  const accessReturn = shouldSrc.indexOf('if (expiresAtMs - nowMs <= REFRESH_LEAD_MS) return true')
+  const refreshIf = shouldSrc.indexOf('if (refreshExpiresAtMs !== undefined')
+  assert.ok(accessReturn > 0 && refreshIf > accessReturn, 'refresh 腿的 if 应在 access 腿之后')
+  const gap = shouldSrc.slice(accessReturn, refreshIf)
+    .split('\n').filter((l) => !l.trim().startsWith('//') && !l.trim().startsWith('*')).join('\n')
+  assert.doesNotMatch(gap, /&&|return false/,
+    '两条腿的 return true 之间不得有 && 或提前 return false（那会破坏「或」语义）')
+  // codearts 必须接线（它是唯一有 30 天硬上限的渠道）
+  const svcSrc = read('vendor/channel-pack/src/service.ts')
+  assert.match(svcSrc, /refreshExpiresAtOf: \(credential\) => \(/,
+    'codearts 必须注入 refresh 寿命腿（它是 30 天硬上限的受害者）')
+  assert.match(svcSrc, /decodeJwtExpMs\(credential\.refresh_token/,
+    'refresh 寿命腿应复用 decodeJwtExpMs（已处理 exp 溢出成 Infinity 的形态）')
+})
+
 if (failed > 0) { console.error(`\nchannel-expiry-terminal: ${failed} 项失败`); process.exit(1) }
 console.log('\nchannel-expiry-terminal: 全部通过')

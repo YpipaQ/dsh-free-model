@@ -50,8 +50,29 @@ const CODEARTS_EXPIRY_ACCESSORS: ExpiryAccessors<CodeArtsCredential> = {
     return Number.isFinite(parsed) ? parsed : undefined
   },
   refreshableOf: isCodeArtsRefreshable,
+  /**
+   * **refresh_token 自己的过期时刻**（上游 577b27a7 / 真实报废事故）。
+   *
+   * ⚠️ 华为 STS 的 `refresh_token` JWT 里 `exp` **恒等于「登录时刻 + 30 天」**，
+   * **续期不延长它**；而 `access_token` 寿命恒为 2 小时。⇒ 最后一天两侧严重
+   * 不对称：lead-time 最早放行时刻是 `access 到期 − 60m`，可能**晚于** refresh
+   * 的死亡时刻（实测某账号差 5.8 分钟）⇒ 那次续期「成功得太晚」、随后 refresh
+   * 已只剩 54 分钟寿命 ⇒ 账号报废，而面板仍显示「自动续期」。
+   *
+   * ⇒ 补这条腿让 refresh 也进入 lead-time 判据（两条腿取「或」，见
+   * `shouldRefreshNow` 的注释：「与」会把「refresh 还有 3 天、access 只剩 2 分钟」
+   * 这个**正常态**误判成不用续）。
+   *
+   * ⚠️ 复用 `decodeJwtExpMs`（已处理 `exp` 溢出成 `Infinity` 的形态，那种情况返回
+   * `undefined` 而不是一个假的无限远时刻）。不是 JWT / 无 refresh_token 时返回
+   * `undefined` ⇒ 判据退化成单腿（与改动前逐字节相同）。
+   */
+  refreshExpiresAtOf: (credential) => (
+    decodeJwtExpMs(credential.refresh_token ?? '')
+  ),
   identityOf: (credential) => credential.access_key_id ?? '',
 }
+import { decodeJwtExpMs } from './minimax.js'
 import {
   fetchCodeArtsRemoteModels,
   saveModelsCache,

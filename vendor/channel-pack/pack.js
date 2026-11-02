@@ -43811,9 +43811,13 @@ var RefreshScheduler = class {
 
 // vendor/channel-pack/src/expiry-sync.ts
 var EXPIRY_TOLERANCE_MS = 1e3;
-function shouldRefreshNow(expiresAtMs, nowMs = Date.now()) {
+function shouldRefreshNow(expiresAtMs, nowMs = Date.now(), refreshExpiresAtMs) {
   if (expiresAtMs === void 0 || !Number.isFinite(expiresAtMs)) return true;
-  return expiresAtMs - nowMs <= REFRESH_LEAD_MS;
+  if (expiresAtMs - nowMs <= REFRESH_LEAD_MS) return true;
+  if (refreshExpiresAtMs !== void 0 && Number.isFinite(refreshExpiresAtMs) && refreshExpiresAtMs - nowMs <= REFRESH_LEAD_MS) {
+    return true;
+  }
+  return false;
 }
 async function syncAccountExpiry(params) {
   const { pool, provider, credential, accessors, accountId, current, tag: tag2 } = params;
@@ -43884,6 +43888,192 @@ async function refreshAccountWithReconcile(params) {
   return true;
 }
 
+// vendor/channel-pack/src/minimax-product.ts
+var MINIMAX_FALLBACK_MODELS = [
+  {
+    id: "MiniMax-M3.1-Flash-Preview",
+    name: "M3.1-Flash-Preview",
+    contextWindow: 1e6,
+    maxTokens: 128e3,
+    supportsImage: true,
+    effortOptions: ["default", "low", "medium", "high", "xhigh", "max"],
+    defaultEffort: "default",
+    // ⚠️ forced_on：传 disabled 会被服务端**硬拒**（400 `requires adaptive
+    // thinking ... (2013)`，实测）。它与 M2.7 的 forced_on 不同形态：
+    // M2.7 是**静默忽略**，M3.1 是**报错**。
+    thinkingMode: "forced_on"
+  },
+  {
+    id: "MiniMax-M3",
+    name: "M3",
+    contextWindow: 1e6,
+    maxTokens: 128e3,
+    supportsImage: true,
+    // ⚠️ 实测可开关思考（`switchable`）：不传/disabled → 0 思考块，
+    // adaptive → 有思考块。官方形态见远端 `variants`。
+    // ⚠️ 但它**没有 `effort_options`** ⇒ 没有「档位」可选，
+    // 只有「开/关」两态 —— 与 Qoder `qmodel` 的「只有关闭思考」同型。
+    thinkingMode: "switchable"
+  },
+  {
+    id: "MiniMax-M2.7-highspeed",
+    name: "M2.7-highspeed",
+    contextWindow: 2e5,
+    maxTokens: 128e3,
+    supportsImage: false,
+    // ⚠️ forced_on：传 disabled 被**静默忽略**（实测仍产出思考块）
+    thinkingMode: "forced_on"
+  },
+  {
+    id: "MiniMax-M2.7",
+    name: "M2.7",
+    contextWindow: 2e5,
+    maxTokens: 128e3,
+    supportsImage: false,
+    thinkingMode: "forced_on"
+  }
+];
+var MINIMAX = {
+  id: "minimax",
+  displayName: "MiniMax Code",
+  accountHost: "https://account.minimax.cn",
+  apiHost: "https://agent.minimax.cn",
+  region: "cn",
+  buildEnv: "prod",
+  clientId: "mcode-public",
+  audience: "agent-backend",
+  scope: "agent.default",
+  defaultCredentialRef: "MINIMAX_ACCESS_TOKEN",
+  fallbackModels: MINIMAX_FALLBACK_MODELS,
+  maxImageBytesInline: 10 * 1024 * 1024,
+  maxRequestBodyBytes: 64 * 1024 * 1024
+};
+var MINIMAX_DEVICE_CODE_PATH = "/oauth2/device/code";
+var MINIMAX_TOKEN_PATH = "/oauth2/token";
+var MINIMAX_MODELS_PATH = "/mavis/api/v1/models";
+var MINIMAX_INFER_PATH = "/mavis/api/v1/llm/v1/messages";
+var MINIMAX_SIGNIN_STATUS_PATH = "/minimax-cloud/api/v1/signin/status";
+var MINIMAX_SIGNIN_CLAIM_PATH = "/minimax-cloud/api/v1/signin/claim";
+var MINIMAX_CREDIT_DETAILS_PATH = "/minimax-cloud/api/v1/credit/details";
+var MINIMAX_REQUEST_TIMEOUT_MS = 3e4;
+var MINIMAX_OAUTH_TIMEOUT_MS = 2e4;
+
+// vendor/channel-pack/src/minimax.ts
+function decodeJwtExpMs2(token) {
+  const segments = token.split(".");
+  if (segments.length !== 3 || segments[1] === void 0) return void 0;
+  try {
+    const payload = JSON.parse(Buffer.from(segments[1], "base64url").toString("utf8"));
+    return typeof payload.exp === "number" && Number.isFinite(payload.exp) ? Number.isFinite(payload.exp * 1e3) ? payload.exp * 1e3 : void 0 : void 0;
+  } catch {
+    return void 0;
+  }
+}
+function decodeJwtSub(token) {
+  const segments = token.split(".");
+  if (segments.length !== 3 || segments[1] === void 0) return void 0;
+  try {
+    const payload = JSON.parse(Buffer.from(segments[1], "base64url").toString("utf8"));
+    return typeof payload.sub === "string" && payload.sub.length > 0 ? payload.sub : void 0;
+  } catch {
+    return void 0;
+  }
+}
+function minimaxCredentialExpiresAtMs(credential) {
+  const raw = credential.expires_at;
+  if (raw !== void 0) {
+    if (/^\d+$/.test(raw)) {
+      const value = Number(raw);
+      const parsed = value > 1e12 ? value : value * 1e3;
+      if (Number.isFinite(parsed) && parsed > 0) return parsed;
+    }
+  }
+  return decodeJwtExpMs2(credential.access_token);
+}
+function isMinimaxExpired(credential, nowMs = Date.now()) {
+  const expiresAt = minimaxCredentialExpiresAtMs(credential);
+  return expiresAt !== void 0 && nowMs >= expiresAt;
+}
+function isMinimaxRefreshable(credential) {
+  return typeof credential.refresh_token === "string" && credential.refresh_token.length > 0;
+}
+function minimaxHeaders(credential) {
+  const headers = new Headers();
+  headers.set("Authorization", `Bearer ${credential.access_token}`);
+  headers.set("Accept", "application/json");
+  return headers;
+}
+function minimaxInferHeaders(credential) {
+  const headers = new Headers();
+  headers.set("Authorization", `Bearer ${credential.access_token}`);
+  headers.set("Content-Type", "application/json");
+  headers.set("Accept", "text/event-stream");
+  return headers;
+}
+function positiveInt(value) {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : void 0;
+}
+function nonEmptyString(value) {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : void 0;
+}
+function stringArray(value) {
+  if (!Array.isArray(value)) return void 0;
+  const out = [];
+  const seen = /* @__PURE__ */ new Set();
+  for (const item of value) {
+    const text = nonEmptyString(item);
+    if (text === void 0 || seen.has(text)) continue;
+    seen.add(text);
+    out.push(text);
+  }
+  return out.length > 0 ? out : void 0;
+}
+function normalizeMinimaxModel(raw) {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return void 0;
+  const record = raw;
+  const id = nonEmptyString(record.id) ?? nonEmptyString(record.name);
+  if (id === void 0) return void 0;
+  const name2 = nonEmptyString(record.name) ?? id;
+  const limit = typeof record.limit === "object" && record.limit !== null ? record.limit : {};
+  const options = Array.isArray(record.context_window_options) ? record.context_window_options.filter((v) => positiveInt(v) !== void 0) : [];
+  const limitContext = positiveInt(limit.context);
+  const contextWindow = options.length > 0 ? Math.max(...options) : limitContext;
+  const modalities = typeof record.modalities === "object" && record.modalities !== null ? record.modalities : {};
+  const inputs = Array.isArray(modalities.input) ? modalities.input.filter((v) => typeof v === "string") : [];
+  const effortOptions = stringArray(record.effort_options);
+  const rawDefault = nonEmptyString(record.default_effort);
+  const defaultEffort = rawDefault !== void 0 && effortOptions?.includes(rawDefault) === true ? rawDefault : void 0;
+  const thinkingConfig = typeof record.thinking_config === "object" && record.thinking_config !== null ? record.thinking_config : void 0;
+  const thinkingMode = thinkingConfig === void 0 ? void 0 : nonEmptyString(thinkingConfig.mode);
+  const maxTokens = positiveInt(limit.output);
+  return {
+    id,
+    name: name2,
+    // 窗口未知时**不编造**：用 0 表示「不知道」，由 resolveModel 判 `> 0`
+    contextWindow: contextWindow ?? 0,
+    ...maxTokens === void 0 ? {} : { maxTokens },
+    supportsImage: inputs.includes("image"),
+    ...effortOptions === void 0 ? {} : { effortOptions },
+    ...defaultEffort === void 0 ? {} : { defaultEffort },
+    ...thinkingMode === void 0 ? {} : { thinkingMode }
+  };
+}
+function fallbackToEntry(model) {
+  return {
+    id: model.id,
+    name: model.name,
+    contextWindow: model.contextWindow,
+    maxTokens: model.maxTokens,
+    supportsImage: model.supportsImage,
+    ...model.effortOptions === void 0 ? {} : { effortOptions: model.effortOptions },
+    ...model.defaultEffort === void 0 ? {} : { defaultEffort: model.defaultEffort },
+    ...model.thinkingMode === void 0 ? {} : { thinkingMode: model.thinkingMode }
+  };
+}
+function minimaxFallbackEntries(product = MINIMAX) {
+  return product.fallbackModels.map(fallbackToEntry);
+}
+
 // vendor/channel-pack/src/service.ts
 function isCodeArtsRefreshable(credential) {
   return Boolean(
@@ -43896,6 +44086,24 @@ var CODEARTS_EXPIRY_ACCESSORS = {
     return Number.isFinite(parsed) ? parsed : void 0;
   },
   refreshableOf: isCodeArtsRefreshable,
+  /**
+   * **refresh_token 自己的过期时刻**（上游 577b27a7 / 真实报废事故）。
+   *
+   * ⚠️ 华为 STS 的 `refresh_token` JWT 里 `exp` **恒等于「登录时刻 + 30 天」**，
+   * **续期不延长它**；而 `access_token` 寿命恒为 2 小时。⇒ 最后一天两侧严重
+   * 不对称：lead-time 最早放行时刻是 `access 到期 − 60m`，可能**晚于** refresh
+   * 的死亡时刻（实测某账号差 5.8 分钟）⇒ 那次续期「成功得太晚」、随后 refresh
+   * 已只剩 54 分钟寿命 ⇒ 账号报废，而面板仍显示「自动续期」。
+   *
+   * ⇒ 补这条腿让 refresh 也进入 lead-time 判据（两条腿取「或」，见
+   * `shouldRefreshNow` 的注释：「与」会把「refresh 还有 3 天、access 只剩 2 分钟」
+   * 这个**正常态**误判成不用续）。
+   *
+   * ⚠️ 复用 `decodeJwtExpMs`（已处理 `exp` 溢出成 `Infinity` 的形态，那种情况返回
+   * `undefined` 而不是一个假的无限远时刻）。不是 JWT / 无 refresh_token 时返回
+   * `undefined` ⇒ 判据退化成单腿（与改动前逐字节相同）。
+   */
+  refreshExpiresAtOf: (credential) => decodeJwtExpMs2(credential.refresh_token ?? ""),
   identityOf: (credential) => credential.access_key_id ?? ""
 };
 var CODEARTS_CREDENTIAL_REF = "CODEARTS_ACCESS_TOKEN";
@@ -55884,192 +56092,6 @@ function positiveOrZero(value) {
 }
 function rankBuddyAccountsByBalance(accounts, options = {}) {
   return accounts.map((account, index) => ({ account, index, tier: buddyBalanceTier(account, options) })).sort((a, b) => a.tier - b.tier || a.index - b.index).map((entry) => entry.account);
-}
-
-// vendor/channel-pack/src/minimax-product.ts
-var MINIMAX_FALLBACK_MODELS = [
-  {
-    id: "MiniMax-M3.1-Flash-Preview",
-    name: "M3.1-Flash-Preview",
-    contextWindow: 1e6,
-    maxTokens: 128e3,
-    supportsImage: true,
-    effortOptions: ["default", "low", "medium", "high", "xhigh", "max"],
-    defaultEffort: "default",
-    // ⚠️ forced_on：传 disabled 会被服务端**硬拒**（400 `requires adaptive
-    // thinking ... (2013)`，实测）。它与 M2.7 的 forced_on 不同形态：
-    // M2.7 是**静默忽略**，M3.1 是**报错**。
-    thinkingMode: "forced_on"
-  },
-  {
-    id: "MiniMax-M3",
-    name: "M3",
-    contextWindow: 1e6,
-    maxTokens: 128e3,
-    supportsImage: true,
-    // ⚠️ 实测可开关思考（`switchable`）：不传/disabled → 0 思考块，
-    // adaptive → 有思考块。官方形态见远端 `variants`。
-    // ⚠️ 但它**没有 `effort_options`** ⇒ 没有「档位」可选，
-    // 只有「开/关」两态 —— 与 Qoder `qmodel` 的「只有关闭思考」同型。
-    thinkingMode: "switchable"
-  },
-  {
-    id: "MiniMax-M2.7-highspeed",
-    name: "M2.7-highspeed",
-    contextWindow: 2e5,
-    maxTokens: 128e3,
-    supportsImage: false,
-    // ⚠️ forced_on：传 disabled 被**静默忽略**（实测仍产出思考块）
-    thinkingMode: "forced_on"
-  },
-  {
-    id: "MiniMax-M2.7",
-    name: "M2.7",
-    contextWindow: 2e5,
-    maxTokens: 128e3,
-    supportsImage: false,
-    thinkingMode: "forced_on"
-  }
-];
-var MINIMAX = {
-  id: "minimax",
-  displayName: "MiniMax Code",
-  accountHost: "https://account.minimax.cn",
-  apiHost: "https://agent.minimax.cn",
-  region: "cn",
-  buildEnv: "prod",
-  clientId: "mcode-public",
-  audience: "agent-backend",
-  scope: "agent.default",
-  defaultCredentialRef: "MINIMAX_ACCESS_TOKEN",
-  fallbackModels: MINIMAX_FALLBACK_MODELS,
-  maxImageBytesInline: 10 * 1024 * 1024,
-  maxRequestBodyBytes: 64 * 1024 * 1024
-};
-var MINIMAX_DEVICE_CODE_PATH = "/oauth2/device/code";
-var MINIMAX_TOKEN_PATH = "/oauth2/token";
-var MINIMAX_MODELS_PATH = "/mavis/api/v1/models";
-var MINIMAX_INFER_PATH = "/mavis/api/v1/llm/v1/messages";
-var MINIMAX_SIGNIN_STATUS_PATH = "/minimax-cloud/api/v1/signin/status";
-var MINIMAX_SIGNIN_CLAIM_PATH = "/minimax-cloud/api/v1/signin/claim";
-var MINIMAX_CREDIT_DETAILS_PATH = "/minimax-cloud/api/v1/credit/details";
-var MINIMAX_REQUEST_TIMEOUT_MS = 3e4;
-var MINIMAX_OAUTH_TIMEOUT_MS = 2e4;
-
-// vendor/channel-pack/src/minimax.ts
-function decodeJwtExpMs2(token) {
-  const segments = token.split(".");
-  if (segments.length !== 3 || segments[1] === void 0) return void 0;
-  try {
-    const payload = JSON.parse(Buffer.from(segments[1], "base64url").toString("utf8"));
-    return typeof payload.exp === "number" && Number.isFinite(payload.exp) ? Number.isFinite(payload.exp * 1e3) ? payload.exp * 1e3 : void 0 : void 0;
-  } catch {
-    return void 0;
-  }
-}
-function decodeJwtSub(token) {
-  const segments = token.split(".");
-  if (segments.length !== 3 || segments[1] === void 0) return void 0;
-  try {
-    const payload = JSON.parse(Buffer.from(segments[1], "base64url").toString("utf8"));
-    return typeof payload.sub === "string" && payload.sub.length > 0 ? payload.sub : void 0;
-  } catch {
-    return void 0;
-  }
-}
-function minimaxCredentialExpiresAtMs(credential) {
-  const raw = credential.expires_at;
-  if (raw !== void 0) {
-    if (/^\d+$/.test(raw)) {
-      const value = Number(raw);
-      const parsed = value > 1e12 ? value : value * 1e3;
-      if (Number.isFinite(parsed) && parsed > 0) return parsed;
-    }
-  }
-  return decodeJwtExpMs2(credential.access_token);
-}
-function isMinimaxExpired(credential, nowMs = Date.now()) {
-  const expiresAt = minimaxCredentialExpiresAtMs(credential);
-  return expiresAt !== void 0 && nowMs >= expiresAt;
-}
-function isMinimaxRefreshable(credential) {
-  return typeof credential.refresh_token === "string" && credential.refresh_token.length > 0;
-}
-function minimaxHeaders(credential) {
-  const headers = new Headers();
-  headers.set("Authorization", `Bearer ${credential.access_token}`);
-  headers.set("Accept", "application/json");
-  return headers;
-}
-function minimaxInferHeaders(credential) {
-  const headers = new Headers();
-  headers.set("Authorization", `Bearer ${credential.access_token}`);
-  headers.set("Content-Type", "application/json");
-  headers.set("Accept", "text/event-stream");
-  return headers;
-}
-function positiveInt(value) {
-  return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : void 0;
-}
-function nonEmptyString(value) {
-  return typeof value === "string" && value.trim().length > 0 ? value.trim() : void 0;
-}
-function stringArray(value) {
-  if (!Array.isArray(value)) return void 0;
-  const out = [];
-  const seen = /* @__PURE__ */ new Set();
-  for (const item of value) {
-    const text = nonEmptyString(item);
-    if (text === void 0 || seen.has(text)) continue;
-    seen.add(text);
-    out.push(text);
-  }
-  return out.length > 0 ? out : void 0;
-}
-function normalizeMinimaxModel(raw) {
-  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return void 0;
-  const record = raw;
-  const id = nonEmptyString(record.id) ?? nonEmptyString(record.name);
-  if (id === void 0) return void 0;
-  const name2 = nonEmptyString(record.name) ?? id;
-  const limit = typeof record.limit === "object" && record.limit !== null ? record.limit : {};
-  const options = Array.isArray(record.context_window_options) ? record.context_window_options.filter((v) => positiveInt(v) !== void 0) : [];
-  const limitContext = positiveInt(limit.context);
-  const contextWindow = options.length > 0 ? Math.max(...options) : limitContext;
-  const modalities = typeof record.modalities === "object" && record.modalities !== null ? record.modalities : {};
-  const inputs = Array.isArray(modalities.input) ? modalities.input.filter((v) => typeof v === "string") : [];
-  const effortOptions = stringArray(record.effort_options);
-  const rawDefault = nonEmptyString(record.default_effort);
-  const defaultEffort = rawDefault !== void 0 && effortOptions?.includes(rawDefault) === true ? rawDefault : void 0;
-  const thinkingConfig = typeof record.thinking_config === "object" && record.thinking_config !== null ? record.thinking_config : void 0;
-  const thinkingMode = thinkingConfig === void 0 ? void 0 : nonEmptyString(thinkingConfig.mode);
-  const maxTokens = positiveInt(limit.output);
-  return {
-    id,
-    name: name2,
-    // 窗口未知时**不编造**：用 0 表示「不知道」，由 resolveModel 判 `> 0`
-    contextWindow: contextWindow ?? 0,
-    ...maxTokens === void 0 ? {} : { maxTokens },
-    supportsImage: inputs.includes("image"),
-    ...effortOptions === void 0 ? {} : { effortOptions },
-    ...defaultEffort === void 0 ? {} : { defaultEffort },
-    ...thinkingMode === void 0 ? {} : { thinkingMode }
-  };
-}
-function fallbackToEntry(model) {
-  return {
-    id: model.id,
-    name: model.name,
-    contextWindow: model.contextWindow,
-    maxTokens: model.maxTokens,
-    supportsImage: model.supportsImage,
-    ...model.effortOptions === void 0 ? {} : { effortOptions: model.effortOptions },
-    ...model.defaultEffort === void 0 ? {} : { defaultEffort: model.defaultEffort },
-    ...model.thinkingMode === void 0 ? {} : { thinkingMode: model.thinkingMode }
-  };
-}
-function minimaxFallbackEntries(product = MINIMAX) {
-  return product.fallbackModels.map(fallbackToEntry);
 }
 
 // vendor/channel-pack/src/credits.ts
