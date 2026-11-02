@@ -87,6 +87,8 @@ const suites = [
   ['channel-trae-image-order', 'channel-trae-image-order-test.mjs', []],
   // ZCode：system 数组恒 3 块（第 4 块 ⇒ 405+3012），调用方 system 走 messages。
   ['channel-zcode-system-blocks', 'channel-zcode-system-blocks-test.mjs', []],
+  // ZCode 405 恒不可重试（归 SERVER 会让 harness 白重试 5 轮并累积账号冷却惩罚）。
+  ['channel-zcode-405', 'channel-zcode-405-test.mjs', []],
   ['channel-network', 'channel-network-test.mjs', []],
 ].filter(([name]) => only === null || name.startsWith(only))
 

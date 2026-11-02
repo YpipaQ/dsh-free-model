@@ -1902,10 +1902,50 @@ export function httpErrorCodeForZcode(status: number, body: string): string {
   const trimmed = body.trim()
   if (trimmed.includes('3007')) return 'RATE_LIMIT'
   if (hasZcodeUnusualActivity(trimmed)) return 'PERMISSION'
-  if (trimmed.includes('1113') || trimmed.includes('余额不足')) return 'QUOTA_EXCEEDED'
+  // ⚠️ **`1005` 也必须是额度判据**（上游 758a20bc 明列的邻位一）：
+  // `{"code":1005}` + 405 的报文若被 405 分支吞掉，本该是 `QUOTA_EXCEEDED`
+  //（额度用尽），却会报成「风控拦截」——把用户引向换号/等冷却，而真实出路是等额度。
+  if (trimmed.includes('1113') || trimmed.includes('1005') || trimmed.includes('余额不足')) return 'QUOTA_EXCEEDED'
   if (status === 401 || trimmed.includes('1002')) return 'AUTH'
   if (status === 429) return 'RATE_LIMIT'
   if (status >= 500) return 'SERVER'
+  /**
+   * ⚠️⚠️ **`405` 恒不可重试**（上游 758a20bc / Gitee IKQ4B4，本 fork 2026-11-02 移植）。
+   *
+   * ## `405` 在 ZCode **从不是**「HTTP 方法不允许」
+   *
+   * 它是**风控拦截的专属状态码**（`docs/agent-notes/providers-zcode.md` 的消融矩阵：
+   * 裸请求 / 无身份块都是「405 + 3012」）。而上游有时把拦截包成**边缘 CDN 的 HTML
+   * 页**（`<title>405</title>`，无业务码、无风控语义）。
+   *
+   * ## 旧行为为什么「越重试越糟」
+   *
+   * 落进最后的 `return 'SERVER'` ⇒ 它在 harness 的 `DEFAULT_RETRYABLE_CODES` 里
+   * ⇒ **白重试 5 轮**，每轮都真实打到上游。实测会话里逐字的 retry 链：
+   *
+   * ```
+   * retry 1/5 code SERVER delay 476ms   status 405
+   * retry 2/5 … 950ms / 3/5 … 1928ms / 4/5 … 4107ms / 5/5 … 7237ms
+   * ```
+   *
+   * 而 `3012` 有**账号冷却惩罚**（30 分钟起，反复触发升级到 24 小时乃至停用）⇒
+   * 对 405 重试不只是无用，是**有害**的。用户原话「405 html 重试了 3 个 5 次都没用」。
+   *
+   * ## 三个邻位（上游实测，缺一个就判错）
+   *
+   * | 邻位 | 错放的后果 |
+   * |---|---|
+   * | 在**权威业务码之后** | `{"code":1005}` + 405 被吞，本该是 `QUOTA_EXCEEDED` |
+   * | 码**不取 `PERMISSION`** | 既有守卫钉住「PERMISSION ⟺ 风控语义」，而 405 页没有风控语义 |
+   * | 在 `status >= 500` / `400` 判据**之外**（互斥） | — |
+   *
+   * ⚠️ 上游另有一条「必须在 HTML 短路**之前**」——本 fork **没有 HTML 短路**
+   * （本函数是纯 status + body 关键字判据），故该邻位此处不适用。
+   *
+   * ⚠️ 取 `PERMISSION_DENIED`（**不在** `DEFAULT_RETRYABLE_CODES` 里）：
+   * 与 `EMPTY_RESPONSE`/`RATE_LIMIT`/`SERVER`/`TIMEOUT`/`TRANSPORT` 都不重合。
+   */
+  if (status === 405) return 'PERMISSION_DENIED'
   if (status === 400) return 'INVALID_REQUEST'
   return 'SERVER'
 }

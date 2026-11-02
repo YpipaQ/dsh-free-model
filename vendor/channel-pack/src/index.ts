@@ -100,6 +100,7 @@ export { serializeTraeMessagesForTest } from './trae-adapter.js'
 // 「system 数组恒为 3 块」是上游实测的硬约束（第 4 块 ⇒ 405 + 3012），
 // 只能靠产出物验证，故暴露给套件直接调用。
 export { buildZcodeSystemBlocks, withCallerSystem } from './zcode-identity.js'
+export { httpErrorCodeForZcode } from './zcode-adapter.js'
 import { execFile } from 'node:child_process'
 
 /**

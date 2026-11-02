@@ -56055,10 +56055,11 @@ function httpErrorCodeForZcode(status, body) {
   const trimmed = body.trim();
   if (trimmed.includes("3007")) return "RATE_LIMIT";
   if (hasZcodeUnusualActivity(trimmed)) return "PERMISSION";
-  if (trimmed.includes("1113") || trimmed.includes("\u4F59\u989D\u4E0D\u8DB3")) return "QUOTA_EXCEEDED";
+  if (trimmed.includes("1113") || trimmed.includes("1005") || trimmed.includes("\u4F59\u989D\u4E0D\u8DB3")) return "QUOTA_EXCEEDED";
   if (status === 401 || trimmed.includes("1002")) return "AUTH";
   if (status === 429) return "RATE_LIMIT";
   if (status >= 500) return "SERVER";
+  if (status === 405) return "PERMISSION_DENIED";
   if (status === 400) return "INVALID_REQUEST";
   return "SERVER";
 }
@@ -73740,6 +73741,7 @@ export {
   buildZcodeSystemBlocks,
   channelProxyBypassed,
   createChannelFetch,
+  httpErrorCodeForZcode,
   inject,
   makeReadImage,
   makeReadImageRequest,
