@@ -154,3 +154,41 @@ const refreshTimer = setInterval(() => {
 
 **但分两步交付**：先做 **codearts + buddy 系**（我们的主力渠道，验证闭环），
 确认行为对后再铺其余 8 家 —— 避免一次改 10 家、出问题时难定位是哪家。
+
+
+---
+
+## 七、实施结果（2026-11-02，已完成，提交 `62110ce`）
+
+### 与最初方案的差异（三处，均由实测修正）
+
+| 原方案 | 实际做法 | 为什么改 |
+| --- | --- | --- |
+| `refreshCatalog` 里清 `remoteModels` | **codearts/buddy 只清 `remoteComplete`**；`loadModels` 形态才清 `remoteModels`（且带失败恢复） | `ensureRemoteModels` 失败时本来保留旧值，顺手清数据会毁掉它 ⇒ 网络抖动退回兜底子表 |
+| 启动时立刻跑一次刷新 | **不跑**，只挂 30 分钟定时器 | DSH 启动时会自己 `await listModels()` 拉一次新鲜目录；再补首轮是重复拉取，且打红了 `channel-catalog-heal` 用例（可控时钟下「冷却到期必须重拉」的断言前提被提前消耗） |
+| 先做 codearts + buddy 两步验证，再铺 8 家 | 直接 10 家一起做 | 两步验证后发现形态分两类（`remoteComplete` / `remoteModels`），模板化后一次铺完风险不高；且行为用例（⑤）同时覆盖了两种形态 |
+
+### 最终接线（10 家）
+
+`llm-adapter`（codearts）、`buddy-adapter`（buddy + workbuddy 共用一个类）、
+`cline`、`lobsterai`、`loomy`、`minimax`、`raccoon`、`trae`、`zcode`、`accio`。
+
+`gemini-adapter` 跳过（目录本地派生、零远端拉取）。
+
+### 验证
+
+- `channel-catalog-refresh` 5 条，含**行为级**用例：
+  真实挂载 → 远端换目录 → `refreshCatalog()` → `listModels` **真的看到新模型**；
+  再模拟网络故障 → 刷新后**仍保留旧目录**（不退回兜底子表）。
+- **变异实测有牙**：① 清掉「清标记」那行 ⇒ ②③ 红；② 定时器不调 ⇒ ④ 红。
+- 22/22 套件。
+
+### 过程中踩的两个坑（会改变以后做法）
+
+1. **TDZ**：`refreshAllCatalogs` 定义在 1803 行、引用 `modelAdapters`（2204 行才赋值），
+   而首轮触发在两者之间 ⇒ 加 `typeof modelAdapters === 'undefined'` 守卫，
+   并把首轮移到 `modelAdapters` 之后。**这是「按名字找位置插代码」的典型盲区** ——
+   以后插跨作用域调用必须先确认被引用者的定义行号。
+2. **同名方法插重复**：cline 的 `refreshCatalog` 被插了两份（我用了模板替换但脚本
+   跑了两轮）⇒ 构建不报错（两个同名方法在 JS 里合法，后者覆盖前者），
+   **只有数 `grep -c` 才发现**。⇒ 批量插方法后**必须数一遍个数**。
