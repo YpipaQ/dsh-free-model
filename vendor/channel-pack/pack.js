@@ -69638,6 +69638,21 @@ function isTransportError6(error) {
   if (message2.includes("epipe") || message2.includes("socket hang up")) return true;
   return false;
 }
+function accioFailureClassOf(code) {
+  if (code === "QUOTA_EXCEEDED") return "quota";
+  if (code === "RATE_LIMIT") return "rate";
+  if (code === "AUTH") return "auth";
+  return "other";
+}
+function shouldRotateAccioAccount(code) {
+  return accioFailureClassOf(code) !== "other";
+}
+function recordsAccioRateLimit(code) {
+  const cls = accioFailureClassOf(code);
+  return cls === "quota" || cls === "rate";
+}
+var ACCIO_MAX_ROTATE = 8;
+var ACCIO_RATE_LIMIT_COOLDOWN_MS = 36e5;
 function httpErrorCode6(status) {
   if (status === 401 || status === 403) return "AUTH";
   if (status === 402) return "QUOTA_EXCEEDED";
@@ -70169,44 +70184,125 @@ var AccioAdapter = class extends LlmAdapter12 {
     if (systemInstruction !== "") body.system_instruction = systemInstruction;
     else delete body.system_instruction;
     if (options.stop !== void 0 && options.stop.length > 0) body.stop_sequences = options.stop;
-    applyAccessToken(body, credential.access_token);
     let response = await this.send(credential, body, options);
-    if (!response.ok && (response.status === 401 || response.status === 403)) {
-      await this.options.refresh();
-      const refreshed = await this.options.resolveCredential(options.model);
-      if (refreshed === void 0 || refreshed.access_token === "") {
-        throw new LlmError20("accio: credential expired and refresh failed", "AUTH", {
-          status: response.status
-        });
+    let currentAccountId = "";
+    if (this.options.accountPool !== void 0) {
+      try {
+        currentAccountId = await this.options.accountPool.findAccountIdByCredential(
+          ACCIO.id,
+          credential.access_token
+        ) ?? "";
+      } catch {
       }
-      credential = refreshed;
-      applyAccessToken(body, credential.access_token);
-      response = await this.send(credential, body, options);
     }
-    if (!response.ok) {
-      const text = await response.text().catch(() => "");
-      throw new LlmError20(`accio: ${errorDetail6(text)}`, httpErrorCode6(response.status), {
-        status: response.status
-      });
+    const tried = /* @__PURE__ */ new Set();
+    let producedAny = false;
+    const markCurrentAccount = async (failureCode) => {
+      if (this.options.accountPool === void 0) return;
+      if (currentAccountId === "" || !recordsAccioRateLimit(failureCode)) return;
+      try {
+        const cls = accioFailureClassOf(failureCode);
+        await this.options.accountPool.updateModelRateLimit(
+          currentAccountId,
+          options.model,
+          cls === "quota" ? nextUtc8DayStartMs() : Date.now() + ACCIO_RATE_LIMIT_COOLDOWN_MS
+        );
+      } catch (error) {
+        console.warn(
+          `[accio] \u8D26\u53F7 ${currentAccountId} \u7684\u51B7\u5374\u6807\u8BB0\u5199\u5165\u5931\u8D25\uFF08\u4E0D\u5F71\u54CD\u6362\u53F7\uFF09\uFF1A`,
+          error instanceof Error ? error.message : String(error)
+        );
+      }
+    };
+    const rotate = async () => {
+      if (this.options.accountPool === void 0) return void 0;
+      try {
+        const next = await this.options.accountPool.getAvailableAccount(
+          ACCIO.id,
+          options.model,
+          tried
+        );
+        if (!next || tried.has(next.entry.id)) return void 0;
+        tried.add(next.entry.id);
+        const nextCredential = next.credential;
+        currentAccountId = next.entry.id;
+        credential = nextCredential;
+        applyAccessToken(body, credential.access_token);
+        return await this.send(credential, body, options);
+      } catch (error) {
+        console.warn(
+          "[accio] \u6362\u53F7\u5931\u8D25\uFF0C\u6309\u300C\u65E0\u53EF\u7528\u8D26\u53F7\u300D\u5904\u7406\uFF1A",
+          error instanceof Error ? error.message : String(error)
+        );
+        return void 0;
+      }
+    };
+    const consumeOnce = async function* (target) {
+      const streamBody = target.body;
+      if (streamBody === null) throw new LlmError20("accio: empty model response body", "EMPTY_RESPONSE");
+      for await (const chunk of consumeAccioSse({
+        body: streamBody.pipeThrough(accioToolCallMergeTransform()),
+        ...options.signal === void 0 ? {} : { signal: options.signal },
+        idleTimeoutMs: ACCIO_SSE_IDLE_TIMEOUT_MS
+      })) {
+        producedAny = true;
+        yield chunk;
+      }
+    };
+    for (let round = 0; ; round++) {
+      if (!response.ok) {
+        const text = await response.text().catch(() => "");
+        if (response.status === 401 || response.status === 403) {
+          await this.options.refresh();
+          const refreshed = await this.options.resolveCredential(options.model);
+          if (refreshed !== void 0 && refreshed.access_token !== "") {
+            credential = refreshed;
+            applyAccessToken(body, credential.access_token);
+            response = await this.send(credential, body, options);
+            if (response.ok) continue;
+          }
+        }
+        const code = httpErrorCode6(response.status);
+        if (!shouldRotateAccioAccount(code)) {
+          throw new LlmError20(`accio: ${errorDetail6(text)}`, code, { status: response.status });
+        }
+        await markCurrentAccount(code);
+        if (round >= ACCIO_MAX_ROTATE - 1) {
+          throw new LlmError20(`accio: ${errorDetail6(text)}`, code, { status: response.status });
+        }
+        const rotated = await rotate();
+        if (rotated === void 0) {
+          throw new LlmError20(`accio: ${errorDetail6(text)}`, code, { status: response.status });
+        }
+        response = rotated;
+        continue;
+      }
+      if (response.body === null) {
+        throw new LlmError20("accio: empty model response body", "EMPTY_RESPONSE");
+      }
+      const contentType = response.headers.get("content-type") ?? "";
+      if (!contentType.includes("text/event-stream")) {
+        const peek = await response.text().catch(() => "");
+        throw new LlmError20(
+          `accio: \u4E0A\u6E38\u672A\u8FD4\u56DE\u4E8B\u4EF6\u6D41\uFF08content-type: ${contentType || "(\u7A7A)"}\uFF09\u2014\u2014\u901A\u5E38\u662F\u88AB\u98CE\u63A7\u62E6\u622A\uFF08\u7F51\u5173\u8FD4\u56DE 200 + HTML \u62E6\u622A\u9875\uFF09\u3002${peek === "" ? "" : ` \u670D\u52A1\u7AEF\u539F\u6587\uFF1A${peek.slice(0, 200)}`}`,
+          "SERVER",
+          { status: response.status }
+        );
+      }
+      try {
+        yield* consumeOnce(response);
+        return;
+      } catch (error) {
+        if (producedAny) throw error;
+        const code = error instanceof LlmError20 ? error.code : "";
+        if (code === "" || !shouldRotateAccioAccount(code)) throw error;
+        await markCurrentAccount(code);
+        if (round >= ACCIO_MAX_ROTATE - 1) throw error;
+        const rotated = await rotate();
+        if (rotated === void 0) throw error;
+        response = rotated;
+      }
     }
-    if (response.body === null) {
-      throw new LlmError20("accio: empty model response body", "EMPTY_RESPONSE");
-    }
-    const contentType = response.headers.get("content-type") ?? "";
-    if (!contentType.includes("text/event-stream")) {
-      const peek = await response.text().catch(() => "");
-      throw new LlmError20(
-        `accio: \u4E0A\u6E38\u672A\u8FD4\u56DE\u4E8B\u4EF6\u6D41\uFF08content-type: ${contentType || "(\u7A7A)"}\uFF09\u2014\u2014\u901A\u5E38\u662F\u88AB\u98CE\u63A7\u62E6\u622A\uFF08\u7F51\u5173\u8FD4\u56DE 200 + HTML \u62E6\u622A\u9875\uFF09\u3002${peek === "" ? "" : ` \u670D\u52A1\u7AEF\u539F\u6587\uFF1A${peek.slice(0, 200)}`}`,
-        "SERVER",
-        { status: response.status }
-      );
-    }
-    const merged = response.body.pipeThrough(accioToolCallMergeTransform());
-    yield* consumeAccioSse({
-      body: merged,
-      ...options.signal === void 0 ? {} : { signal: options.signal },
-      idleTimeoutMs: ACCIO_SSE_IDLE_TIMEOUT_MS
-    });
   }
   /** 发起一次推理请求；网络失败映射为可重试的 `TRANSPORT`。 */
   async send(credential, body, options) {

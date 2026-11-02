@@ -81,6 +81,8 @@ const suites = [
   ['channel-expiry-terminal', 'channel-expiry-terminal-test.mjs', []],
   // 模型上下架自适应：10 家 refreshCatalog + 30 分钟定时器保鲜 + 失败保留旧目录。
   ['channel-catalog-refresh', 'channel-catalog-refresh-test.mjs', []],
+  // Accio 请求级账号轮换：402/429 换号+冷却、401 换号不冷却、400 不换号。
+  ['channel-accio-rotate', 'channel-accio-rotate-test.mjs', []],
   ['channel-network', 'channel-network-test.mjs', []],
 ].filter(([name]) => only === null || name.startsWith(only))
 
