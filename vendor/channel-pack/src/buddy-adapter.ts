@@ -1867,7 +1867,20 @@ export class BuddyAdapter extends LlmAdapter {
       // 分类抛出」—— 用户看到「整条渠道全灭」，而池里其余完全可用的账号一个都没试到
       //（实测：被拒账号恰是池首，每轮都撞它）。
       const channelRejected = isChannelVerificationRejection(errorText, response.status)
-      if (this.options.accountPool && (isRateLimited(errorText, response.status) || channelRejected)) {
+      /**
+       * ⚠️ **11140 也可能回 HTTP 400**（上游 89f53be2，2026-10-16 实测的后端行为变更）：
+       *
+       * 11140 安全策略拦截原先固定回 403，后来后端改成**回 400**。而 11140 的换号
+       * 处理原先只在 401/403 分支里 ⇒ 400 不进该分支 ⇒ 直接抛 `INVALID_REQUEST`
+       * ⇒ 池里有可用账号也用不上（症状与 11128 那档一模一样）。
+       *
+       * ⇒ 入口判据必须**同时**认 `isContentRejection`（11140 任意状态码形态）。
+       * 循环内第 ① 档（`isContentRejection`）早已存在，缺的只是这道**入场券** ——
+       * 少了它，那一档永远执行不到。
+       */
+      const contentRejectedOn400 = isContentRejection(errorText)
+      if (this.options.accountPool
+        && (isRateLimited(errorText, response.status) || channelRejected || contentRejectedOn400)) {
         const tried = new Set<string>()
         if (currentAccountId) tried.add(currentAccountId)
 
@@ -1884,9 +1897,22 @@ export class BuddyAdapter extends LlmAdapter {
         //
         // 这与认证路径（上面的 401/403 分支）必须保持同一语义：坏账号可能排在
         // 任何位置，安全策略拦截和认证失败一样只是「这个账号不可用」。
-        let sawContentRejection = false
-        let contentRejectionStatus = 0
-        let contentRejectionBody = ''
+        // ⚠️ 初值取 `contentRejectedOn400`（不是 false）：单账号池（或候选全被限流
+        // 标记过滤掉）时循环第一跳就 break ⇒ 从 false 起算会把「被安全策略拦截」
+        // 误报成「所有账号均受限」+ `QUOTA_EXCEEDED`（让用户白等一个不存在的重置时刻）。
+        let sawContentRejection = contentRejectedOn400
+        let contentRejectionStatus = contentRejectedOn400 ? response.status : 0
+        let contentRejectionBody = contentRejectedOn400 ? errorText : ''
+        // ⚠️ **首发账号也要写冷却**（否则它下一轮仍排第一、每轮都先撞一次）。
+        //
+        // 认证路径（401/403 分支）里的首发已经在入口处标记过；而 400 路径的首发
+        // **只被判进了这个循环**，循环体只处理「换号后」的账号 ⇒ 首发漏标。
+        // 上游 89f53be2 的验收判据正是「400 换到可用账号即成功 + 被拦账号写冷却」。
+        if (contentRejectedOn400 && currentAccountId !== '') {
+          await markPolicyBlockedAccount(
+            this.options.accountPool, this.product.id, currentAccountId, options.model,
+          )
+        }
         // ⚠️ 初值取 `channelRejected`（不是 `false`）：循环内那一档只在「换到下一个
         // 账号后又被拒」时置位，单账号池第一跳就 break ⇒ 从 false 起算会把渠道校验
         // 误报成「所有账号均受限」+ `QUOTA_EXCEEDED`（让用户白等一个不存在的重置时刻）。

@@ -35850,12 +35850,21 @@ var BuddyAdapter = class _BuddyAdapter extends LlmAdapter2 {
         }
       }
       const channelRejected = isChannelVerificationRejection(errorText, response.status);
-      if (this.options.accountPool && (isRateLimited(errorText, response.status) || channelRejected)) {
+      const contentRejectedOn400 = isContentRejection(errorText);
+      if (this.options.accountPool && (isRateLimited(errorText, response.status) || channelRejected || contentRejectedOn400)) {
         const tried = /* @__PURE__ */ new Set();
         if (currentAccountId) tried.add(currentAccountId);
-        let sawContentRejection = false;
-        let contentRejectionStatus = 0;
-        let contentRejectionBody = "";
+        let sawContentRejection = contentRejectedOn400;
+        let contentRejectionStatus = contentRejectedOn400 ? response.status : 0;
+        let contentRejectionBody = contentRejectedOn400 ? errorText : "";
+        if (contentRejectedOn400 && currentAccountId !== "") {
+          await markPolicyBlockedAccount(
+            this.options.accountPool,
+            this.product.id,
+            currentAccountId,
+            options.model
+          );
+        }
         let sawChannelVerification = channelRejected;
         let channelVerificationStatus = channelRejected ? response.status : 0;
         let channelVerificationBody = channelRejected ? errorText : "";

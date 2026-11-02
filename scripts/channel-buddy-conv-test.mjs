@@ -193,5 +193,44 @@ await step('④ 11140 仍写冷却（未被渠道校验排除逻辑误伤）', a
   } finally { globalThis.fetch = saved }
 })
 
+// ⑤ 11140 回 HTTP 400（后端行为变更）也必须换号 + 写冷却（上游 89f53be2）
+await step('⑤ 11140 回 400 时也换号并写冷却', async () => {
+  // 上游实测：11140 原固定回 403，后端改成**回 400**。旧实现只在 401/403 分支里
+  // 处理 11140 ⇒ 400 直接抛 INVALID_REQUEST ⇒ 池里有可用账号也用不上。
+  const saved = globalThis.fetch
+  let calls = 0
+  globalThis.fetch = async (url) => {
+    if (String(url).includes('/v2/chat/completions')) {
+      calls++
+      // 首个账号 ← 400/11140；第二个账号 ← 正常
+      if (calls === 1) return body400(11140, 'request illegal')
+    }
+    return sseOk()
+  }
+  try {
+    const { adapter } = await mount([conv('wb6'), conv('wb7')])
+    const chunks = await drain(adapter)
+    assert.ok(JSON.stringify(chunks).includes('收到'), '换到可用账号后应拿到响应')
+    // 被 11140 拦的账号**必须写冷却**（与 11128 渠道校验相反）
+    assert.ok(!noCooldown('wb6'), '11140 必须写冷却（该账号需在冷却期内被跳过）')
+    assert.equal(calls, 2, `应换号一次（实发 ${calls} 次）`)
+  } finally { globalThis.fetch = saved }
+})
+
+// ⑥ 单账号池 400/11140：报 PERMISSION_DENIED，不得误报「所有账号均受限」
+await step('⑥ 单账号 400/11140 → PERMISSION_DENIED（不误报额度受限）', async () => {
+  const saved = globalThis.fetch
+  globalThis.fetch = async () => body400(11140, 'request illegal')
+  try {
+    const { adapter } = await mount([conv('wb8')])
+    let err
+    try { await drain(adapter) } catch (error) { err = error }
+    assert.ok(err, '400/11140 应抛错')
+    assert.equal(err.code, 'PERMISSION_DENIED',
+      `应报 PERMISSION_DENIED（不是 QUOTA_EXCEEDED），实为 ${err.code}`)
+    assert.doesNotMatch(err.message, /所有账号均受限/, '不得误报成额度受限')
+  } finally { globalThis.fetch = saved }
+})
+
 if (failed > 0) { console.error(`\nchannel-buddy-conv: ${failed} 项失败`); process.exit(1) }
 console.log('\nchannel-buddy-conv: 全部通过')
