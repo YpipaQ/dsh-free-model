@@ -12,12 +12,12 @@
 | --- | --- |
 | `index.js` | `a932bcb6bdeef608496071a60d1f9e8499997fca52765e0eb300171d8728aa57` |
 | `client.js` | `13332f9b4102e5cc7125998983126df7b50cfa6a32ef5e20aefc51aca0a5e820` |
-| `vendor/channel-pack/pack.js` | `db742c3cfc418d0cca600d914c033fdbb3c8ba82ed6d7d36b97dbf20352c5ba9` |
+| `vendor/channel-pack/pack.js` | `b1d9d58209ba4737fef2882b9504ceea9310e1ef06ea857e61fc671a7eb86196` |
 
 ⚠️ `pack.js` 的指纹随每次「刷新模型数据 / 移植上游修复」而变（它是构建产物）。
-上面的值对应**补上 DSH `@` 文件引用说明句指纹（2026-10-29，照上游 82d007a6）之后**的版本；
+上面的值对应**上游跟进一批（2026-11-02：目录自适应 + 12 项上游修复）之后**的版本；
 域名面结论未变，`scripts/egress-audit.mjs` 可随时重跑复验。
-（上一版 `b0162b38…` 是 DSH 自身首句指纹后的产物。）
+（上一版 `db742c3c…` 是 DSH `@` 文件引用说明句后的产物。）
 
 ## 结论
 

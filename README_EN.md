@@ -95,7 +95,7 @@ Four settings pages (down from nine):
 
 Sizes: `src/` went from **58 modules to 5** (`store/key/chan-relay/egress/trust`), the host `index.js`
 from **2343 to 684 lines**, the browser half `client.js` from **5992 to 2538 lines**, and the offline
-suites from 45 to **18**. Every `animation` and `@keyframes` rule is gone as well.
+suites from 45 to **27**. Every `animation` and `@keyframes` rule is gone as well.
 
 ## Configuration
 
@@ -148,7 +148,7 @@ the browser half talks to it over the shell's `connection` RPC (`usage.tokenLedg
 ## Tests
 
 ```bash
-npm test                            # 18 offline suites: no network, no quota
+npm test                            # 27 offline suites: no network, no quota
 node scripts/host-smoke-test.mjs     # the host HTTP surface only
 node scripts/client-lint.mjs         # the browser half only (dictionary keys, CSS reachability)
 ```
@@ -167,6 +167,13 @@ node scripts/client-lint.mjs         # the browser half only (dictionary keys, C
 | `channel-officeace-lock` / `channel-officeace-login` | The ported OfficeAce channel: the login loop really goes through RPC (authorize URL → poll → token → persisted); the lock **decision and its execution** are asserted case by case (unlocked keeps the old path verbatim, locked-with-only-permanent must throw and never fall back to the pool) |
 | `channel-accio` | The ported Accio channel: a callback-style login really goes through RPC (authorize page → local callback → token exchange → persisted under the **account's own ref**), plus the auto-renew table is asserted to cover accio / officeace (a missing entry = silently never renewed, with no log) |
 | `channel-buddy-conv` | WorkBuddy/CodeBuddy: `send()` must emit three non-empty `X-Conversation-*` headers (without them, certain accounts get the whole channel dead on `400/11128` every turn); the channel-verification tier rotates accounts, **writes no cooldown**, and reports `PERMISSION_DENIED` pointing at the account; a single-account pool must not misreport `QUOTA_EXCEEDED`; 11140 still writes its cooldown |
+| `channel-zcode-system-blocks` | ZCode's `system` array must stay at exactly 3 blocks (a 4th one ⇒ 405+3012); caller system goes into messages |
+| `channel-zcode-405` | ZCode `405` is never retryable (classifying it as SERVER caused 5 pointless retries plus account-cooldown penalties) |
+| `channel-officeace-checkin` | OfficeAce daily check-in: failures must log and release the hourly slot (otherwise the hour is pinned and the day's 1000 points are lost) |
+| `channel-accio-rotate` | Accio per-request account rotation (402/429 rotate+cooldown, 401 rotate *without* cooldown, 400 does not rotate) |
+| `channel-trae-image-order` | TRAE: tool-result images must come after all `tool` messages (otherwise 4027 permanently breaks the session) |
+| `channel-catalog-refresh` | Model catalogue self-refresh (10 adapters expose `refreshCatalog`, a 30-minute timer keeps it fresh, failures keep the old catalogue) |
+| `channel-credit-exhausted` / `channel-tool-args` / `channel-expiry-terminal` | 14018 credit exhaustion must not fall back to 1h / tool args triage (truncated vs invalid) / save-failure after a successful refresh is terminal, with per-provider error classes |
 | `channel-fingerprint` | Tencent content-fingerprint rewriting: missing the assistant-body case means a poisoned history replays every turn — the session is dead **and switching to any other Tencent model does not help**; the allowlist is exactly buddy/workbuddy; benign text is left intact |
 
 The other 37 of upstream's 45 suites tested lanes this fork deletes. The suites run **from a checkout
