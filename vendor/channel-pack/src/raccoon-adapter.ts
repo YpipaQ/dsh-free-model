@@ -299,6 +299,34 @@ export class RaccoonAdapter extends LlmAdapter {
    * 改为：只缓存**真实远端目录**，兜底表每次现算（纯本地、零成本），
    * 并用 {@link RemoteCatalogGate} 的冷却挡住「每模型重试一次」的放大。
    */
+  /**
+   * **强制重拉远端目录**（模型上下架自适应；供 `index.ts` 的定时器调用）。
+   *
+   * ## ⚠️⚠️ 本类短路判据是 `if (this.remoteModels !== undefined) return`（在 `loadModels` 里）
+   *
+   * ⇒ 必须**先清 `remoteModels`** 才能触发重拉；但清掉后若重拉失败，`loadModels`
+   * 会**返回兜底子表**并把结果留在 `remoteModels` 之外 ⇒ 用户少看到一批模型。
+   *
+   * ⇒ **保存—尝试—失败恢复**：旧目录先存下来，重拉后若没拿到远端就放回去
+   *（「刷新失败」与「不刷新」对用户无差别，都继续看旧目录）。
+   *
+   * ⚠️ 判据是「`remoteModels` 是否被**远端**填上」，不能用「`loadModels` 返回了什么」：
+   * 它在拿不到远端时**照样返回兜底表**（那是展示用，不落 `remoteModels`）。
+   */
+  async refreshCatalog(): Promise<void> {
+    if (this.options.fetchRemoteModels === undefined) return
+    const previous = this.remoteModels
+    this.remoteModels = undefined
+    try {
+      await this.loadModels()
+    } finally {
+      // `loadModels` 成功时会把远端结果写回 `remoteModels`；没写回 ⇒ 没拿到远端 ⇒ 恢复旧值
+      if (this.remoteModels === undefined && previous !== undefined) {
+        this.remoteModels = previous
+      }
+    }
+  }
+
   private async loadModels(): Promise<RaccoonRemoteModel[]> {
     if (this.remoteModels !== undefined) return this.remoteModels
     const fetchRemote = this.options.fetchRemoteModels

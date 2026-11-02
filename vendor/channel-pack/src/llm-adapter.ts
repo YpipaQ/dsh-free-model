@@ -996,6 +996,34 @@ export class CodeArtsAdapter extends LlmAdapter {
    * 懒加载远端模型目录。resolveModel 可能先于 listModels 被调用
    * （如直接进入会话），此时同样触发远端拉取。
    */
+  /**
+   * **强制重拉远端目录**（模型上下架自适应；供 `index.ts` 的定时器调用）。
+   *
+   * ## ⚠️⚠️ 只清「已完成」标记，**绝不清 `remoteModels` 数据**
+   *
+   * `ensureRemoteModels` 的失败语义**已经是对的**：
+   * - `fetchRemote()` 抛异常 ⇒ 直接冒出，`remoteModels` **保持旧值**
+   *   （用户继续看到旧目录，比退回 `DEFAULT_MODELS` 兜底子集好）；
+   * - 返回空数组 ⇒ `return false`（不落缓存、不立刻重试）。
+   *
+   * 若在这里顺手写 `this.remoteModels = undefined` 就会**毁掉**这个好语义：
+   * 一次网络抖动 ⇒ 好端端的旧目录被清 ⇒ `listAllModels()` 落回兜底表
+   *（那是**子集**且**已过期**，实测 3 条已 404）⇒ 用户突然少看到一批模型。
+   *
+   * ⇒ **只清标记**，让 `ensureRemoteModels` 自己决定何时覆盖数据。
+   *
+   * ⚠️ `listAllModels()` 是**同步**读 `remoteModels` 的缓存视图 ⇒ 刷新成功后它
+   * 立刻看到新值（`ensureRemoteModels` 已重新赋值），无需额外「补读」步骤。
+   *
+   * ⚠️ 本方法**必须 public**：`index.ts` 的定时器经 `modelAdapters` 逐家调用
+   *（那里每项是 `withDeadModelPruning` 的 Proxy，新成员自动透出并绑 `this`）。
+   */
+  async refreshCatalog(): Promise<void> {
+    if (this.options.fetchRemoteModels === undefined) return
+    this.remoteComplete = false
+    await this.ensureRemoteModels()
+  }
+
   private async ensureRemoteModels(): Promise<void> {
     const fetchRemote = this.options.fetchRemoteModels
     // ⚠️ 短路判据是「已**完整**」而非「已定义」（见 `remoteComplete`）。

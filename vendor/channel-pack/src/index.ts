@@ -1781,6 +1781,54 @@ const zcodeAdapter = registerZcodeLlm(ctx, {
     ['accio', (p) => accio.refreshAll(p)],
   ]
 
+  /**
+   * **目录刷新的一轮**（模型上下架自适应，2026-11-02）。
+   *
+   * ## 为什么复用续期定时器而不新建
+   *
+   * `index.ts` 已有一个 30 分钟一轮的 `setInterval`（下方 `refreshTimer`），它自带
+   * `ctx.effect` 释放清理、`timer.unref()`、启动先跑一轮 —— 目录刷新要的正是同一套。
+   * 上游那套独立的 `createCatalogRefresher` 是为「没有定时器」的架构补的，我们不需要。
+   *
+   * ## 三条纪律
+   *
+   * 1. **逐家容错**：单个 provider 刷新失败不得中断其余（与 `refreshAllCredentials`
+   *    同语义）。失败**只记 warn**，不影响用户当前看到的目录（旧值仍在）。
+   * 2. **单飞防重入**：上一轮没跑完就不叠第二轮。30 分钟周期下前一轮通常早跑完，
+   *    但「首轮 + 定时器恰好同时触发」、或某家网络卡到跨周期时会出现叠加。
+   * 3. **只调有 `refreshCatalog` 的适配器**：正在做「先两步验证」阶段 ——
+   *    未接线的渠道会跳过（`undefined` 判据），不会报错。
+   */
+  let catalogRefreshInFlight = false
+  async function refreshAllCatalogs(): Promise<void> {
+    if (catalogRefreshInFlight) return
+    // ⚠️ **TDZ 守卫**：本函数在 1803 行定义、`modelAdapters` 在 2204 行才赋值，
+    // 而首轮触发可能在两者之间。`setInterval` 的回调延迟执行没问题，但若首轮
+    // 在这里同步跑就会撞 Temporal Dead Zone 抛 ReferenceError。
+    // ⇒ 判据用 `typeof`，未就绪时**静默跳过**（下一轮 30 分钟后自然补上）。
+    if (typeof modelAdapters === 'undefined') return
+    catalogRefreshInFlight = true
+    try {
+      // 走 `modelAdapters` 而不是 `ctx.llm`：后者是 DSH 公开面、不认识
+      // `refreshCatalog`；而 `modelAdapters` 每项都是 `withDeadModelPruning`
+      // 的 Proxy —— 它对**其余成员原样透传并绑定 this** ⇒ 新方法自动透出。
+      for (const [tag, adapter] of Object.entries(modelAdapters)) {
+        const refresh = (adapter as { refreshCatalog?: () => Promise<void> }).refreshCatalog
+        if (typeof refresh !== 'function') continue
+        try {
+          await refresh.call(adapter)
+        } catch (error) {
+          ctx.logger?.warn?.(
+            `[channel-pack] ${tag} 目录刷新失败（保留旧目录）：`
+            + `${error instanceof Error ? error.message : String(error)}`,
+          )
+        }
+      }
+    } finally {
+      catalogRefreshInFlight = false
+    }
+  }
+
   async function refreshAllCredentials(): Promise<void> {
     for (const [tag, refreshAll] of refreshTargets) {
       try {
@@ -1820,7 +1868,12 @@ const zcodeAdapter = registerZcodeLlm(ctx, {
   pool.listAllAccounts().then(accounts => {
     if (accounts.length === 0) return
     void refreshAllCredentials()
-    const refreshTimer = setInterval(() => void refreshAllCredentials(), REFRESH_INTERVAL_MS)
+    const refreshTimer = setInterval(() => {
+      void refreshAllCredentials()
+      // ⚠️ 目录刷新**与续期同轮**：两者周期诉求相同（30 分钟），且都已自带
+      // 单飞/逐家容错；拆成两个定时器只会让「哪一轮先跑」变得不可预测。
+      void refreshAllCatalogs()
+    }, REFRESH_INTERVAL_MS)
     refreshTimer.unref?.()
     ctx.effect(() => () => {
       clearInterval(refreshTimer)
@@ -2170,6 +2223,17 @@ const zcodeAdapter = registerZcodeLlm(ctx, {
     zcode: pruned(ZCODE.id, zcodeAdapter),
     ...(opencodeAdapter === undefined ? {} : { opencode: pruned(OPENCODE.id, opencodeAdapter) }),
   }
+
+  // ⚠️ **刻意不在启动时立刻刷目录**（2026-11-02 实测的取舍）。
+  //
+  // 启动时 DSH 的 `buildModelCatalog` 本来就会对每个 provider `await listModels()`，
+  // 那一刻 `ensureRemoteModels` 自然会拉一次**新鲜**目录 ⇒ 再补一个「启动首轮」
+  // 只是把同一次拉取变成两次（每轮 10~20 个请求），且会与 `catalog-prewarm` 的
+  // 补拉轮次打架（`channel-catalog-heal` 用例实测被打红：可控时钟下的「冷却到期
+  // 必须重拉」断言前提被首轮提前消耗掉）。
+  //
+  // ⇒ 目录刷新的职责只有「**保鲜**」这一半（无人读时也更新），交给 30 分钟定时器；
+  // 而「启动就要新目录」那一半由 DSH 自己的首次 `listModels()` 免费提供。
 
   // 插件卸载前把签名缓存落盘：`stream()` 每次结束都 flush，但用户可能
   // 直接关掉 DSH 而上一轮的 flush 还在排队 —— 落一次盘几乎零成本，

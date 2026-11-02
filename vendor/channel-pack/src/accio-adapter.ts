@@ -1080,6 +1080,33 @@ export class AccioAdapter extends LlmAdapter {
   }
 
   /** 懒加载远端模型目录（仅拉取一次；失败/空结果走闸门冷却）。 */
+  /**
+   * **强制重拉远端目录**（模型上下架自适应；供 `index.ts` 的定时器调用）。
+   *
+   * ## ⚠️⚠️ 本类短路判据是 `remoteModels !== undefined`（不是 `remoteComplete`）
+   *
+   * ⇒ 必须**先清 `remoteModels`** 才能触发重拉；但清掉后若重拉失败，
+   * `ensureRemoteModels` 会**保留 undefined** ⇒ 目录退回**兜底子表**（那是个**子集**
+   * 且**已过期**）⇒ 一次网络抖动就让用户少看到一批模型。
+   *
+   * ⇒ 采用**保存—尝试—失败恢复**：旧目录先存下来，重拉后若仍为空就放回去。
+   * 这样「刷新失败」与「不刷新」对用户是无差别的（都继续看旧目录）。
+   */
+  async refreshCatalog(): Promise<void> {
+    if (this.options.fetchRemoteModels === undefined) return
+    const previous = this.remoteModels
+    this.remoteModels = undefined
+    try {
+      await this.ensureRemoteModels()
+    } finally {
+      // ⚠️ `finally` 而不是 `catch`：`ensureRemoteModels` 正常情况下不抛（失败由
+      // `catalogGate` 吞成冷却），但**真抛了也不能把旧目录丢掉**。
+      if (this.remoteModels === undefined && previous !== undefined) {
+        this.remoteModels = previous
+      }
+    }
+  }
+
   private async ensureRemoteModels(): Promise<void> {
     const fetchRemote = this.options.fetchRemoteModels
     if (this.remoteModels !== undefined || fetchRemote === undefined) return

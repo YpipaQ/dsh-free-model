@@ -1144,6 +1144,28 @@ export class BuddyAdapter extends LlmAdapter {
     })
   }
 
+  /**
+   * **强制重拉远端目录**（模型上下架自适应；供 `index.ts` 的定时器调用）。
+   *
+   * ## ⚠️⚠️ 只清 `remoteComplete`，**三个缓存字段都不清**
+   *
+   * 本类的目录缓存有**三个联动字段**（`remoteModels` / `remoteMeta` /
+   * `remoteContextWindows`），它们由 `ensureRemoteModels` 内部**一起重建** ⇒
+   * 清标记后重拉即可，手动清任何一个都会制造「只更新一半」的不一致中间态。
+   *
+   * 失败语义（与 codearts 同）：拉取抛异常 ⇒ `ensureRemoteModels` 直接冒出、
+   * **三个字段都保留旧值**；返回空数组 ⇒ `return false`（不落缓存）。
+   * ⇒ 一次网络抖动不会把好端端的旧目录清成兜底子集。
+   *
+   * ⚠️ 本类服务**两个产品**（buddy / workbuddy），各自一个实例 ⇒ 定时器按
+   * `modelAdapters` 的两项分别调用，各自刷新，互不影响。
+   */
+  async refreshCatalog(): Promise<void> {
+    if (this.options.fetchRemoteModels === undefined) return
+    this.remoteComplete = false
+    await this.ensureRemoteModels()
+  }
+
   private async ensureRemoteModels(): Promise<void> {
     const fetchRemote = this.options.fetchRemoteModels
     // ⚠️ 短路判据是「已**完整**」而非「已定义」（见 `remoteComplete`）。

@@ -33890,6 +33890,33 @@ var CodeArtsAdapter = class extends LlmAdapter {
    * 懒加载远端模型目录。resolveModel 可能先于 listModels 被调用
    * （如直接进入会话），此时同样触发远端拉取。
    */
+  /**
+   * **强制重拉远端目录**（模型上下架自适应；供 `index.ts` 的定时器调用）。
+   *
+   * ## ⚠️⚠️ 只清「已完成」标记，**绝不清 `remoteModels` 数据**
+   *
+   * `ensureRemoteModels` 的失败语义**已经是对的**：
+   * - `fetchRemote()` 抛异常 ⇒ 直接冒出，`remoteModels` **保持旧值**
+   *   （用户继续看到旧目录，比退回 `DEFAULT_MODELS` 兜底子集好）；
+   * - 返回空数组 ⇒ `return false`（不落缓存、不立刻重试）。
+   *
+   * 若在这里顺手写 `this.remoteModels = undefined` 就会**毁掉**这个好语义：
+   * 一次网络抖动 ⇒ 好端端的旧目录被清 ⇒ `listAllModels()` 落回兜底表
+   *（那是**子集**且**已过期**，实测 3 条已 404）⇒ 用户突然少看到一批模型。
+   *
+   * ⇒ **只清标记**，让 `ensureRemoteModels` 自己决定何时覆盖数据。
+   *
+   * ⚠️ `listAllModels()` 是**同步**读 `remoteModels` 的缓存视图 ⇒ 刷新成功后它
+   * 立刻看到新值（`ensureRemoteModels` 已重新赋值），无需额外「补读」步骤。
+   *
+   * ⚠️ 本方法**必须 public**：`index.ts` 的定时器经 `modelAdapters` 逐家调用
+   *（那里每项是 `withDeadModelPruning` 的 Proxy，新成员自动透出并绑 `this`）。
+   */
+  async refreshCatalog() {
+    if (this.options.fetchRemoteModels === void 0) return;
+    this.remoteComplete = false;
+    await this.ensureRemoteModels();
+  }
   async ensureRemoteModels() {
     const fetchRemote = this.options.fetchRemoteModels;
     if (this.remoteComplete || fetchRemote === void 0) return;
@@ -35381,6 +35408,27 @@ var BuddyAdapter = class _BuddyAdapter extends LlmAdapter2 {
       readImageRequest: this.options.readImageRequest,
       pixelBudget: this.product.imagePixelBudget
     });
+  }
+  /**
+   * **强制重拉远端目录**（模型上下架自适应；供 `index.ts` 的定时器调用）。
+   *
+   * ## ⚠️⚠️ 只清 `remoteComplete`，**三个缓存字段都不清**
+   *
+   * 本类的目录缓存有**三个联动字段**（`remoteModels` / `remoteMeta` /
+   * `remoteContextWindows`），它们由 `ensureRemoteModels` 内部**一起重建** ⇒
+   * 清标记后重拉即可，手动清任何一个都会制造「只更新一半」的不一致中间态。
+   *
+   * 失败语义（与 codearts 同）：拉取抛异常 ⇒ `ensureRemoteModels` 直接冒出、
+   * **三个字段都保留旧值**；返回空数组 ⇒ `return false`（不落缓存）。
+   * ⇒ 一次网络抖动不会把好端端的旧目录清成兜底子集。
+   *
+   * ⚠️ 本类服务**两个产品**（buddy / workbuddy），各自一个实例 ⇒ 定时器按
+   * `modelAdapters` 的两项分别调用，各自刷新，互不影响。
+   */
+  async refreshCatalog() {
+    if (this.options.fetchRemoteModels === void 0) return;
+    this.remoteComplete = false;
+    await this.ensureRemoteModels();
   }
   async ensureRemoteModels() {
     const fetchRemote = this.options.fetchRemoteModels;
@@ -36972,6 +37020,30 @@ var LobsteraiAdapter = class extends LlmAdapter3 {
    * `listModels` 与 `resolveModel` 共用：`resolveModel` 可能先于 `listModels`
    * 被调用（如直接从历史会话进入），此时同样需要触发一次拉取。
    */
+  /**
+   * **强制重拉远端目录**（模型上下架自适应；供 `index.ts` 的定时器调用）。
+   *
+   * ## ⚠️⚠️ 本类短路判据是 `remoteModels !== undefined`（不是 `remoteComplete`）
+   *
+   * ⇒ 必须**先清 `remoteModels`** 才能触发重拉；但清掉后若重拉失败，
+   * `ensureRemoteModels` 会**保留 undefined** ⇒ 目录退回**兜底子表**（那是个**子集**
+   * 且**已过期**）⇒ 一次网络抖动就让用户少看到一批模型。
+   *
+   * ⇒ 采用**保存—尝试—失败恢复**：旧目录先存下来，重拉后若仍为空就放回去。
+   * 这样「刷新失败」与「不刷新」对用户是无差别的（都继续看旧目录）。
+   */
+  async refreshCatalog() {
+    if (this.options.fetchRemoteModels === void 0) return;
+    const previous = this.remoteModels;
+    this.remoteModels = void 0;
+    try {
+      await this.ensureRemoteModels();
+    } finally {
+      if (this.remoteModels === void 0 && previous !== void 0) {
+        this.remoteModels = previous;
+      }
+    }
+  }
   async ensureRemoteModels() {
     const fetchRemote = this.options.fetchRemoteModels;
     if (this.remoteModels !== void 0 || fetchRemote === void 0) return;
@@ -40717,6 +40789,30 @@ var TraeAdapter = class extends LlmAdapter5 {
     return { id, name: this.product.displayName };
   }
   /** 懒加载远端模型目录（仅拉取一次）。 */
+  /**
+   * **强制重拉远端目录**（模型上下架自适应；供 `index.ts` 的定时器调用）。
+   *
+   * ## ⚠️⚠️ 本类短路判据是 `remoteModels !== undefined`（不是 `remoteComplete`）
+   *
+   * ⇒ 必须**先清 `remoteModels`** 才能触发重拉；但清掉后若重拉失败，
+   * `ensureRemoteModels` 会**保留 undefined** ⇒ 目录退回**兜底子表**（那是个**子集**
+   * 且**已过期**）⇒ 一次网络抖动就让用户少看到一批模型。
+   *
+   * ⇒ 采用**保存—尝试—失败恢复**：旧目录先存下来，重拉后若仍为空就放回去。
+   * 这样「刷新失败」与「不刷新」对用户是无差别的（都继续看旧目录）。
+   */
+  async refreshCatalog() {
+    if (this.options.fetchRemoteModels === void 0) return;
+    const previous = this.remoteModels;
+    this.remoteModels = void 0;
+    try {
+      await this.ensureRemoteModels();
+    } finally {
+      if (this.remoteModels === void 0 && previous !== void 0) {
+        this.remoteModels = previous;
+      }
+    }
+  }
   async ensureRemoteModels() {
     const fetchRemote = this.options.fetchRemoteModels;
     if (this.remoteModels !== void 0 || fetchRemote === void 0) return;
@@ -42300,6 +42396,31 @@ var ClineAdapter = class extends LlmAdapter6 {
    * ⚠️ **并发去重**：`listModels` 与 `resolveModel` 会在启动时被 DSH 并发调用，
    * 不去重会打出多份重复的远端请求（两个端点各一次，乘以并发数）。
    */
+  /**
+   * **强制重拉远端目录**（模型上下架自适应；供 `index.ts` 的定时器调用）。
+   *
+   * ## ⚠️⚠️ 本类短路判据是 `remoteModels !== undefined`（不是 `remoteComplete`）
+   *
+   * ⇒ 必须**先清 `remoteModels`** 才能触发重拉；但清掉后若重拉失败，
+   * `ensureRemoteModels` 会**保留 undefined** ⇒ 目录退回**兜底子表**（那是个**子集**
+   * 且**已过期**）⇒ 一次网络抖动就让用户少看到一批模型。
+   *
+   * ⇒ 采用**保存—尝试—失败恢复**：旧目录先存下来，重拉后若仍为空就放回去。
+   * 这样「刷新失败」与「不刷新」对用户是无差别的（都继续看旧目录）。
+   */
+  async refreshCatalog() {
+    if (this.options.fetchRemoteModels === void 0) return;
+    this.remoteComplete = false;
+    const previous = this.remoteModels;
+    this.remoteModels = void 0;
+    try {
+      await this.ensureRemoteModels();
+    } finally {
+      if (this.remoteModels === void 0 && previous !== void 0) {
+        this.remoteModels = previous;
+      }
+    }
+  }
   async ensureRemoteModels() {
     if (this.remoteComplete) return;
     await this.catalogGate.run(async () => {
@@ -42986,6 +43107,32 @@ var LoomyAdapter = class extends LlmAdapter7 {
    * 改为：只缓存**真实远端目录**，兜底表每次现算（纯本地、零成本），
    * 并用 {@link RemoteCatalogGate} 的冷却挡住「每模型重试一次」的放大。
    */
+  /**
+   * **强制重拉远端目录**（模型上下架自适应；供 `index.ts` 的定时器调用）。
+   *
+   * ## ⚠️⚠️ 本类短路判据是 `if (this.remoteModels !== undefined) return`（在 `loadModels` 里）
+   *
+   * ⇒ 必须**先清 `remoteModels`** 才能触发重拉；但清掉后若重拉失败，`loadModels`
+   * 会**返回兜底子表**并把结果留在 `remoteModels` 之外 ⇒ 用户少看到一批模型。
+   *
+   * ⇒ **保存—尝试—失败恢复**：旧目录先存下来，重拉后若没拿到远端就放回去
+   *（「刷新失败」与「不刷新」对用户无差别，都继续看旧目录）。
+   *
+   * ⚠️ 判据是「`remoteModels` 是否被**远端**填上」，不能用「`loadModels` 返回了什么」：
+   * 它在拿不到远端时**照样返回兜底表**（那是展示用，不落 `remoteModels`）。
+   */
+  async refreshCatalog() {
+    if (this.options.fetchRemoteModels === void 0) return;
+    const previous = this.remoteModels;
+    this.remoteModels = void 0;
+    try {
+      await this.loadModels();
+    } finally {
+      if (this.remoteModels === void 0 && previous !== void 0) {
+        this.remoteModels = previous;
+      }
+    }
+  }
   async loadModels() {
     if (this.remoteModels !== void 0) return this.remoteModels;
     const fetchRemote = this.options.fetchRemoteModels;
@@ -43450,6 +43597,32 @@ var RaccoonAdapter = class extends LlmAdapter8 {
    * 改为：只缓存**真实远端目录**，兜底表每次现算（纯本地、零成本），
    * 并用 {@link RemoteCatalogGate} 的冷却挡住「每模型重试一次」的放大。
    */
+  /**
+   * **强制重拉远端目录**（模型上下架自适应；供 `index.ts` 的定时器调用）。
+   *
+   * ## ⚠️⚠️ 本类短路判据是 `if (this.remoteModels !== undefined) return`（在 `loadModels` 里）
+   *
+   * ⇒ 必须**先清 `remoteModels`** 才能触发重拉；但清掉后若重拉失败，`loadModels`
+   * 会**返回兜底子表**并把结果留在 `remoteModels` 之外 ⇒ 用户少看到一批模型。
+   *
+   * ⇒ **保存—尝试—失败恢复**：旧目录先存下来，重拉后若没拿到远端就放回去
+   *（「刷新失败」与「不刷新」对用户无差别，都继续看旧目录）。
+   *
+   * ⚠️ 判据是「`remoteModels` 是否被**远端**填上」，不能用「`loadModels` 返回了什么」：
+   * 它在拿不到远端时**照样返回兜底表**（那是展示用，不落 `remoteModels`）。
+   */
+  async refreshCatalog() {
+    if (this.options.fetchRemoteModels === void 0) return;
+    const previous = this.remoteModels;
+    this.remoteModels = void 0;
+    try {
+      await this.loadModels();
+    } finally {
+      if (this.remoteModels === void 0 && previous !== void 0) {
+        this.remoteModels = previous;
+      }
+    }
+  }
   async loadModels() {
     if (this.remoteModels !== void 0) return this.remoteModels;
     const fetchRemote = this.options.fetchRemoteModels;
@@ -55147,6 +55320,32 @@ var ZcodeAdapter = class extends LlmAdapter9 {
    * 改为：只缓存**真实远端目录**，兜底表每次现算（纯本地、零成本），
    * 并用 {@link RemoteCatalogGate} 的冷却挡住「每模型重试一次」的放大。
    */
+  /**
+   * **强制重拉远端目录**（模型上下架自适应；供 `index.ts` 的定时器调用）。
+   *
+   * ## ⚠️⚠️ 本类短路判据是 `if (this.remoteModels !== undefined) return`（在 `loadModels` 里）
+   *
+   * ⇒ 必须**先清 `remoteModels`** 才能触发重拉；但清掉后若重拉失败，`loadModels`
+   * 会**返回兜底子表**并把结果留在 `remoteModels` 之外 ⇒ 用户少看到一批模型。
+   *
+   * ⇒ **保存—尝试—失败恢复**：旧目录先存下来，重拉后若没拿到远端就放回去
+   *（「刷新失败」与「不刷新」对用户无差别，都继续看旧目录）。
+   *
+   * ⚠️ 判据是「`remoteModels` 是否被**远端**填上」，不能用「`loadModels` 返回了什么」：
+   * 它在拿不到远端时**照样返回兜底表**（那是展示用，不落 `remoteModels`）。
+   */
+  async refreshCatalog() {
+    if (this.options.fetchRemoteModels === void 0) return;
+    const previous = this.remoteModels;
+    this.remoteModels = void 0;
+    try {
+      await this.loadModels();
+    } finally {
+      if (this.remoteModels === void 0 && previous !== void 0) {
+        this.remoteModels = previous;
+      }
+    }
+  }
   async loadModels() {
     if (this.remoteModels !== void 0) return this.remoteModels;
     const fetchRemote = this.options.fetchRemoteModels;
@@ -66926,6 +67125,32 @@ var MinimaxAdapter = class extends LlmAdapter11 {
    * 改为：只缓存**真实远端目录**，兜底表每次现算（纯本地、零成本），
    * 并用 {@link RemoteCatalogGate} 的冷却挡住「每模型重试一次」的放大。
    */
+  /**
+   * **强制重拉远端目录**（模型上下架自适应；供 `index.ts` 的定时器调用）。
+   *
+   * ## ⚠️⚠️ 本类短路判据是 `if (this.remoteModels !== undefined) return`（在 `loadModels` 里）
+   *
+   * ⇒ 必须**先清 `remoteModels`** 才能触发重拉；但清掉后若重拉失败，`loadModels`
+   * 会**返回兜底子表**并把结果留在 `remoteModels` 之外 ⇒ 用户少看到一批模型。
+   *
+   * ⇒ **保存—尝试—失败恢复**：旧目录先存下来，重拉后若没拿到远端就放回去
+   *（「刷新失败」与「不刷新」对用户无差别，都继续看旧目录）。
+   *
+   * ⚠️ 判据是「`remoteModels` 是否被**远端**填上」，不能用「`loadModels` 返回了什么」：
+   * 它在拿不到远端时**照样返回兜底表**（那是展示用，不落 `remoteModels`）。
+   */
+  async refreshCatalog() {
+    if (this.options.fetchRemoteModels === void 0) return;
+    const previous = this.remoteModels;
+    this.remoteModels = void 0;
+    try {
+      await this.loadModels();
+    } finally {
+      if (this.remoteModels === void 0 && previous !== void 0) {
+        this.remoteModels = previous;
+      }
+    }
+  }
   async loadModels() {
     if (this.remoteModels !== void 0) return this.remoteModels;
     const fetchRemote = this.options.fetchRemoteModels;
@@ -69699,6 +69924,30 @@ var AccioAdapter = class extends LlmAdapter12 {
     return { id, name: this.product.displayName };
   }
   /** 懒加载远端模型目录（仅拉取一次；失败/空结果走闸门冷却）。 */
+  /**
+   * **强制重拉远端目录**（模型上下架自适应；供 `index.ts` 的定时器调用）。
+   *
+   * ## ⚠️⚠️ 本类短路判据是 `remoteModels !== undefined`（不是 `remoteComplete`）
+   *
+   * ⇒ 必须**先清 `remoteModels`** 才能触发重拉；但清掉后若重拉失败，
+   * `ensureRemoteModels` 会**保留 undefined** ⇒ 目录退回**兜底子表**（那是个**子集**
+   * 且**已过期**）⇒ 一次网络抖动就让用户少看到一批模型。
+   *
+   * ⇒ 采用**保存—尝试—失败恢复**：旧目录先存下来，重拉后若仍为空就放回去。
+   * 这样「刷新失败」与「不刷新」对用户是无差别的（都继续看旧目录）。
+   */
+  async refreshCatalog() {
+    if (this.options.fetchRemoteModels === void 0) return;
+    const previous = this.remoteModels;
+    this.remoteModels = void 0;
+    try {
+      await this.ensureRemoteModels();
+    } finally {
+      if (this.remoteModels === void 0 && previous !== void 0) {
+        this.remoteModels = previous;
+      }
+    }
+  }
   async ensureRemoteModels() {
     const fetchRemote = this.options.fetchRemoteModels;
     if (this.remoteModels !== void 0 || fetchRemote === void 0) return;
@@ -73065,6 +73314,27 @@ function apply(ctx, config = {}) {
     // Accio **可续期**（标准 OAuth refresh_token grant）。同款教训见上两行。
     ["accio", (p) => accio.refreshAll(p)]
   ];
+  let catalogRefreshInFlight = false;
+  async function refreshAllCatalogs() {
+    if (catalogRefreshInFlight) return;
+    if (typeof modelAdapters === "undefined") return;
+    catalogRefreshInFlight = true;
+    try {
+      for (const [tag2, adapter] of Object.entries(modelAdapters)) {
+        const refresh = adapter.refreshCatalog;
+        if (typeof refresh !== "function") continue;
+        try {
+          await refresh.call(adapter);
+        } catch (error) {
+          ctx.logger?.warn?.(
+            `[channel-pack] ${tag2} \u76EE\u5F55\u5237\u65B0\u5931\u8D25\uFF08\u4FDD\u7559\u65E7\u76EE\u5F55\uFF09\uFF1A${error instanceof Error ? error.message : String(error)}`
+          );
+        }
+      }
+    } finally {
+      catalogRefreshInFlight = false;
+    }
+  }
   async function refreshAllCredentials() {
     for (const [tag2, refreshAll2] of refreshTargets) {
       try {
@@ -73079,7 +73349,10 @@ function apply(ctx, config = {}) {
   pool.listAllAccounts().then((accounts) => {
     if (accounts.length === 0) return;
     void refreshAllCredentials();
-    const refreshTimer = setInterval(() => void refreshAllCredentials(), REFRESH_INTERVAL_MS);
+    const refreshTimer = setInterval(() => {
+      void refreshAllCredentials();
+      void refreshAllCatalogs();
+    }, REFRESH_INTERVAL_MS);
     refreshTimer.unref?.();
     ctx.effect(() => () => {
       clearInterval(refreshTimer);

@@ -79,6 +79,8 @@ const suites = [
   ['channel-tool-args', 'channel-tool-args-test.mjs', []],
   // 续期成功但落盘失败 = 终态；各家必须注入**自己那家**的错误类（跨模块 instanceof 恒 false）。
   ['channel-expiry-terminal', 'channel-expiry-terminal-test.mjs', []],
+  // 模型上下架自适应：10 家 refreshCatalog + 30 分钟定时器保鲜 + 失败保留旧目录。
+  ['channel-catalog-refresh', 'channel-catalog-refresh-test.mjs', []],
   ['channel-network', 'channel-network-test.mjs', []],
 ].filter(([name]) => only === null || name.startsWith(only))
 
