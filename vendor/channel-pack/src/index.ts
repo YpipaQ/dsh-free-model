@@ -92,6 +92,10 @@ import { primeOpencodeCapabilities, refreshOpencodeCapabilities } from './openco
 import { closeAllProxyDispatchers } from './opencode-proxy.js'
 import { createChannelFetch, type ChannelOutlet } from './channel-fetch.js'
 export { createChannelFetch, parseWindowsProxy, channelProxyBypassed } from './channel-fetch.js'
+// ⚠️ **仅供离线套件**：TRAE 序列化的测试专用包装（见该函数声明的说明）。
+// 「多 tool_call 时工具结果图片必须排在全部 tool 之后」这条语义只能靠出站报文验证，
+// 而走 `stream()` 会先撞模型能力门（图片能力来自远端目录）⇒ 离线桩造不动。
+export { serializeTraeMessagesForTest } from './trae-adapter.js'
 import { execFile } from 'node:child_process'
 
 /**

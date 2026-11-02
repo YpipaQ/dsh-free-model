@@ -392,6 +392,22 @@ function collectImages(content: readonly unknown[], refs: Map<string, unknown>):
  * 空 Map **不能**降级为 undefined —— 那会让「图片存在但字节读取失败」的
  * `[image unavailable]` 占位符也被跳过，图片静默消失。
  */
+/**
+ * ⚠️ **仅供离线套件调用**的包装（不参与运行时逻辑）。
+ *
+ * `serializeTraeMessages` 是内部函数、不随产物导出，而
+ * 「多 tool_call 时工具结果图片必须排在全部 tool 之后」这条语义（上游 0cb0140a）
+ * **只能靠出站报文验证** —— 走 `stream()` 还要先过模型能力门（图片能力来自远端
+ * `display_config.multimodal`），在离线桩里造不动。
+ * ⇒ 暴露一个最小包装给 `scripts/channel-trae-image-order-test.mjs`。
+ */
+export function serializeTraeMessagesForTest(
+  messages: readonly { role: string; content: unknown }[],
+  imageUrls?: ReadonlyMap<string, string>,
+): Array<Record<string, unknown>> {
+  return serializeTraeMessages(messages, imageUrls)
+}
+
 function serializeTraeMessages(
   messages: readonly { role: string; content: unknown }[],
   imageUrls?: ReadonlyMap<string, string>,
@@ -421,6 +437,10 @@ function serializeTraeMessages(
 
   for (const message of normalized) {
     if (message.role === 'assistant') {
+      // ⚠️ **进入下一条 assistant 之前必须落地挂起的工具图片**（上游 0cb0140a 的两处
+      // 落地点之一）：此刻上一批 `role:'tool'` 消息已**全部**下发完毕，把 user 图片
+      // 插在这里是安全的；而插在两条 tool 之间会触发上游 4027（会话永久损坏）。
+      flushToolImages()
       // 存量自愈：清洗历史里已持久化的行首 `course` / `课` 泄漏
       // （见 `stripCourseLeakFromHistoryContent`）。只清 assistant ——
       // 判据只对模型自己的输出成立，清洗用户输入等于篡改用户的话。
@@ -512,8 +532,31 @@ function serializeTraeMessages(
       flushToolImages()
       wire.push({ role: 'user', content: parts ?? text })
     }
-    flushToolImages()
+    // ⚠️⚠️ **不在这里无条件 flush**（上游 0cb0140a，本 fork 2026-11-02 移植）。
+    //
+    // ## 缺陷（会话永久损坏）
+    //
+    // 旧实现在**每条消息**处理末尾都无条件 `flushToolImages()`。于是当一条
+    // assistant 发出 **≥2 个 tool_call**、且**非最后一个**工具结果里内嵌图片时，
+    // 图片会在处理「第一条工具结果」的那条消息末尾就被 flush 成一条 user 消息，
+    // **插到下一条 `role:'tool'` 之前**：
+    //
+    //     assistant(tool_calls) -> user(图片) -> tool -> tool   ← 违反上游配对约束
+    //
+    // 上游恒定回 `code=4027 Messages with role 'tool' must be a response to a
+    // preceding message with 'tool_calls'`。5 次重试与「继续」全部无效，因为
+    // **坏报文已被持久化、每次请求原样重放** ⇒ 该会话**永久无法对话**。
+    // （既有回归用例只覆盖 1 个 tool_call，故这条路径从未被测到。）
+    //
+    // ## 修法
+    //
+    // 图片挂起改为**跨消息累积**，只在两处落地：
+    // 1. 进入下一条 `assistant` 之前（此时上一批 tool 消息已全部下发完毕，安全）——
+    //    见下方 assistant 分支开头的 `flushToolImages()`；
+    // 2. **整个循环结束后**（把最后一批挂起的图片发出去）——就是这里下面那一行。
   }
+  // 循环结束统一落地：把最后一批挂起的工具图片发出去
+  flushToolImages()
   return wire
 }
 

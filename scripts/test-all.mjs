@@ -83,6 +83,8 @@ const suites = [
   ['channel-catalog-refresh', 'channel-catalog-refresh-test.mjs', []],
   // Accio 请求级账号轮换：402/429 换号+冷却、401 换号不冷却、400 不换号。
   ['channel-accio-rotate', 'channel-accio-rotate-test.mjs', []],
+  // TRAE 多 tool_call 时工具结果图片必须排在全部 tool 之后（否则 4027 会话永久损坏）。
+  ['channel-trae-image-order', 'channel-trae-image-order-test.mjs', []],
   ['channel-network', 'channel-network-test.mjs', []],
 ].filter(([name]) => only === null || name.startsWith(only))
 

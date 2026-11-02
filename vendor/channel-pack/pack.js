@@ -40632,6 +40632,9 @@ function collectImages4(content, refs) {
     if (block.type === "tool-result" && Array.isArray(block.content)) collectImages4(block.content, refs);
   }
 }
+function serializeTraeMessagesForTest(messages, imageUrls) {
+  return serializeTraeMessages(messages, imageUrls);
+}
 function serializeTraeMessages(messages, imageUrls) {
   const wire = [];
   const normalized = normalizeHarnessMessages(messages);
@@ -40647,6 +40650,7 @@ function serializeTraeMessages(messages, imageUrls) {
   };
   for (const message2 of normalized) {
     if (message2.role === "assistant") {
+      flushToolImages();
       const content2 = stripCourseLeakFromHistoryContent(
         message2.role,
         Array.isArray(message2.content) ? message2.content : []
@@ -40705,8 +40709,8 @@ function serializeTraeMessages(messages, imageUrls) {
       flushToolImages();
       wire.push({ role: "user", content: parts ?? text });
     }
-    flushToolImages();
   }
+  flushToolImages();
   return wire;
 }
 function errorDetail5(body) {
@@ -73710,5 +73714,6 @@ export {
   makeReadImage,
   makeReadImageRequest,
   name,
-  parseWindowsProxy
+  parseWindowsProxy,
+  serializeTraeMessagesForTest
 };
