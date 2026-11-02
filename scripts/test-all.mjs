@@ -89,6 +89,8 @@ const suites = [
   ['channel-zcode-system-blocks', 'channel-zcode-system-blocks-test.mjs', []],
   // ZCode 405 恒不可重试（归 SERVER 会让 harness 白重试 5 轮并累积账号冷却惩罚）。
   ['channel-zcode-405', 'channel-zcode-405-test.mjs', []],
+  // OfficeAce 每日签到：失败必须留痕 + 撤销占坑（否则本小时钉死、当天 1000 分白丢）。
+  ['channel-officeace-checkin', 'channel-officeace-checkin-test.mjs', []],
   ['channel-network', 'channel-network-test.mjs', []],
 ].filter(([name]) => only === null || name.startsWith(only))
 

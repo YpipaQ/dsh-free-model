@@ -1475,7 +1475,10 @@ export async function claimDailyBonus(
   credential: OfficeAceCredential,
 ): Promise<Array<{ activityId: string; activityName: string; points: number }>> {
   if (!credentialUsable(credential)) {
-    return []
+    // ⚠️ **失败要能被调用方区分**（上游 890dc5f1/61190339）：旧实现一律 `return []`，
+    // 于是「凭据缺失 / 网络失败 / 今日已领」三种情形**完全无法区分** ⇒ 外层既留不了痕、
+    // 也不知道该不该撤销占坑。这里 throw，由 `maybeClaimBonus` 统一处理。
+    throw new Error('凭据缺失（access 或 securityToken 缺失或为空），未发起签到请求')
   }
   try {
     // ⚠️ **POST 必须带 `Content-Type`**（规则 1 的另一面）：实测不带会得到
@@ -1499,9 +1502,30 @@ export async function claimDailyBonus(
       activityName: typeof s.activity_name === 'string' ? s.activity_name : '活动奖励',
       points: Number(s.points) || 0,
     }))
-  } catch {
-    // ⚠️ 签到失败**绝不阻断**余额查询（还有 LOGGER 约定：记日志而不是静默吞）。
-    return []
+  } catch (error) {
+    /**
+     * ⚠️⚠️ **失败必须抛出去、不能吞成空数组**（上游 890dc5f1 / 61190339，
+     * 本 fork 2026-11-02 移植）。
+     *
+     * 旧实现是 `catch { return [] }` —— 后果有三层：
+     *
+     * | # | 后果 |
+     * |---|---|
+     * | ① | **零日志**：失败原因彻底消失，用户只能从「临期桶不见了」反推 |
+     * | ② | **外层 `.catch` 成死代码**：异常在这里就被吞掉，`maybeClaimBonus` 的撤销占坑分支**永不可达** ⇒ 该小时被**钉死** |
+     * | ③ | 「凭据缺失 / 网络失败 / 今日已领」**三种情形同形**（都是空数组）⇒ 无从区分 |
+     *
+     * 后果链条（上游实测真实报障「重新登录了还是没有每日积分」）：当日签到桶
+     * **1000 分 23:59:59 作废**；凭据过期后**连续三天**每天 401 全失败、每天白丢
+     * 1000 分、日志与面板**一个字都没有**。而登录是**异步**写凭据库的 —— 面板刷新与
+     * `login.poll` 赛跑，刷新若抢在新凭据落盘前拿到旧/空凭据 ⇒ 401 ⇒ 静默失败 ⇒
+     * 该小时后续刷新全部跳过 ⇒ **一次赛跑失败 = 当天 1000 分的永久损失**。
+     *
+     * ⚠️ 签到失败**绝不阻断**余额查询（调用方会 catch），但**必须留痕且可撤销占坑**。
+     */
+    throw new Error(
+      `签到请求失败：${error instanceof Error ? error.message : String(error)}`,
+    )
   }
 }
 
@@ -1515,12 +1539,44 @@ export async function claimDailyBonus(
  *    第二个账号永远领不到（它的签到分当日作废）。
  */
 const lastClaimAt = new Map<string, string>()
-function maybeClaimBonus(credential: OfficeAceCredential, ref: string): Promise<unknown> {
+/**
+ * 导出**供离线套件**验证「失败撤销占坑 + 留痕」（上游 890dc5f1 的两处静默）。
+ * 生产调用点只有两处（`withSubscriptionSummary` 与余额路径），语义不变。
+ */
+export function maybeClaimBonus(credential: OfficeAceCredential, ref: string): Promise<unknown> {
   const now = new Date()
   const hourKey = `${now.getFullYear()}-${now.getMonth()}-${now.getDate()}-${now.getHours()}`
   if (lastClaimAt.get(ref) === hourKey) return Promise.resolve([])
   lastClaimAt.set(ref, hourKey)
-  return claimDailyBonus(credential).catch(() => [])
+  /**
+   * ⚠️⚠️ **失败必须撤销占坑**（上游 890dc5f1）—— 否则本小时被**钉死**。
+   *
+   * 旧实现是 `return claimDailyBonus(credential).catch(() => [])`：
+   * ① **零日志**（失败原因彻底消失）；② **占坑不撤销** ⇒ 本小时后续每次刷新都
+   * 在 `lastClaimAt.get(ref) === hourKey` 处直接返回 ⇒ **该小时再也不会重试**。
+   *
+   * 后果：一次赛跑失败（登录异步写凭据库 vs 面板刷新）就可能是当天 1000 分的
+   * **永久损失**（当日 23:59:59 作废）。
+   *
+   * 服务端对重复领取**幂等**（「每日签到有礼」一天只有一份）⇒ 重试无害。
+   */
+  // ⚠️ 撤销必须是**条件删**：`hourKey` 在进入时算，响应回来时可能已跨整点，
+  // 那时新一轮刷新已用**新** hourKey 重建占坑 —— 无条件 `delete(ref)` 会把
+  // **别人的**占坑删掉（节流失效，多打一次幂等签到；形态轻但白搭往返）。
+  const releaseSlot = (): void => {
+    if (lastClaimAt.get(ref) === hourKey) lastClaimAt.delete(ref)
+  }
+  return claimDailyBonus(credential).then((skus) => {
+    // 拿到活动桶 = 领到了；空数组 = 今日已领过 / 无活动（**不撤销**，正常态）
+    return skus
+  }).catch((error: unknown) => {
+    console.warn(
+      `[officeace] 每日签到失败（ref=${ref}），已撤销本小时占坑允许重试：`
+      + `${error instanceof Error ? error.message : String(error)}`,
+    )
+    releaseSlot()
+    return []
+  })
 }
 
 /** Basic 授权头值（推理用）。 */

@@ -70544,6 +70544,7 @@ __export(officeace_auth_exports, {
   fetchModelTokenRates: () => fetchModelTokenRates,
   fetchSubscriptionSummary: () => fetchSubscriptionSummary,
   isExpiring: () => isExpiring,
+  maybeClaimBonus: () => maybeClaimBonus,
   persistLogin: () => persistLogin,
   pollLoginCode: () => pollLoginCode,
   probeOfficeAce: () => probeOfficeAce,
@@ -71205,7 +71206,7 @@ async function fetchCloudSubscriptionFor(credential) {
 }
 async function claimDailyBonus(credential) {
   if (!credentialUsable(credential)) {
-    return [];
+    throw new Error("\u51ED\u636E\u7F3A\u5931\uFF08access \u6216 securityToken \u7F3A\u5931\u6216\u4E3A\u7A7A\uFF09\uFF0C\u672A\u53D1\u8D77\u7B7E\u5230\u8BF7\u6C42");
   }
   try {
     const body = await signAndRequest(
@@ -71220,8 +71221,10 @@ async function claimDailyBonus(credential) {
       activityName: typeof s.activity_name === "string" ? s.activity_name : "\u6D3B\u52A8\u5956\u52B1",
       points: Number(s.points) || 0
     }));
-  } catch {
-    return [];
+  } catch (error) {
+    throw new Error(
+      `\u7B7E\u5230\u8BF7\u6C42\u5931\u8D25\uFF1A${error instanceof Error ? error.message : String(error)}`
+    );
   }
 }
 var lastClaimAt = /* @__PURE__ */ new Map();
@@ -71230,7 +71233,18 @@ function maybeClaimBonus(credential, ref) {
   const hourKey = `${now.getFullYear()}-${now.getMonth()}-${now.getDate()}-${now.getHours()}`;
   if (lastClaimAt.get(ref) === hourKey) return Promise.resolve([]);
   lastClaimAt.set(ref, hourKey);
-  return claimDailyBonus(credential).catch(() => []);
+  const releaseSlot = () => {
+    if (lastClaimAt.get(ref) === hourKey) lastClaimAt.delete(ref);
+  };
+  return claimDailyBonus(credential).then((skus) => {
+    return skus;
+  }).catch((error) => {
+    console.warn(
+      `[officeace] \u6BCF\u65E5\u7B7E\u5230\u5931\u8D25\uFF08ref=${ref}\uFF09\uFF0C\u5DF2\u64A4\u9500\u672C\u5C0F\u65F6\u5360\u5751\u5141\u8BB8\u91CD\u8BD5\uFF1A${error instanceof Error ? error.message : String(error)}`
+    );
+    releaseSlot();
+    return [];
+  });
 }
 function basicAuthorization(credential) {
   return "Basic " + Buffer.from(`${credential.modelAppKey}:${credential.modelAppSecret}`).toString("base64");
@@ -73745,6 +73759,7 @@ export {
   inject,
   makeReadImage,
   makeReadImageRequest,
+  maybeClaimBonus,
   name,
   parseWindowsProxy,
   serializeTraeMessagesForTest,

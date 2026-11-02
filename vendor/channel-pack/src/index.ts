@@ -101,6 +101,7 @@ export { serializeTraeMessagesForTest } from './trae-adapter.js'
 // 只能靠产出物验证，故暴露给套件直接调用。
 export { buildZcodeSystemBlocks, withCallerSystem } from './zcode-identity.js'
 export { httpErrorCodeForZcode } from './zcode-adapter.js'
+export { maybeClaimBonus } from './officeace-auth.js'
 import { execFile } from 'node:child_process'
 
 /**
