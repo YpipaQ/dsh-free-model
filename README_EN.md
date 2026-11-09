@@ -95,7 +95,7 @@ Four settings pages (down from nine):
 
 Sizes: `src/` went from **58 modules to 5** (`store/key/chan-relay/egress/trust`), the host `index.js`
 from **2343 to 684 lines**, the browser half `client.js` from **5992 to 2538 lines**, and the offline
-suites from 45 to **27**. Every `animation` and `@keyframes` rule is gone as well.
+suites from 45 to **30**. Every `animation` and `@keyframes` rule is gone as well.
 
 ## Configuration
 
@@ -148,7 +148,7 @@ the browser half talks to it over the shell's `connection` RPC (`usage.tokenLedg
 ## Tests
 
 ```bash
-npm test                            # 27 offline suites: no network, no quota
+npm test                            # 30 offline suites: no network, no quota
 node scripts/host-smoke-test.mjs     # the host HTTP surface only
 node scripts/client-lint.mjs         # the browser half only (dictionary keys, CSS reachability)
 ```
@@ -169,6 +169,9 @@ node scripts/client-lint.mjs         # the browser half only (dictionary keys, C
 | `channel-buddy-conv` | WorkBuddy/CodeBuddy: `send()` must emit three non-empty `X-Conversation-*` headers (without them, certain accounts get the whole channel dead on `400/11128` every turn); the channel-verification tier rotates accounts, **writes no cooldown**, and reports `PERMISSION_DENIED` pointing at the account; a single-account pool must not misreport `QUOTA_EXCEEDED`; 11140 still writes its cooldown |
 | `channel-zcode-system-blocks` | ZCode's `system` array must stay at exactly 3 blocks (a 4th one ⇒ 405+3012); caller system goes into messages |
 | `channel-zcode-405` | ZCode `405` is never retryable (classifying it as SERVER caused 5 pointless retries plus account-cooldown penalties) |
+| `channel-codearts-ua-codes` | CodeArts inference UA override (Huawei WAF rejects the `deepseek-harness/` prefix) + three business codes classified separately |
+| `channel-zcode-version-generation` | ZCode version and identity block must be the same generation (cross-generation means 405+3012 for every user) |
+| `channel-cline-snapshot-suffix` | Cline models with date/snapshot suffixes inherit the base model's capabilities (otherwise image support and context window are lost) |
 | `channel-officeace-checkin` | OfficeAce daily check-in: failures must log and release the hourly slot (otherwise the hour is pinned and the day's 1000 points are lost) |
 | `channel-accio-rotate` | Accio per-request account rotation (402/429 rotate+cooldown, 401 rotate *without* cooldown, 400 does not rotate) |
 | `channel-trae-image-order` | TRAE: tool-result images must come after all `tool` messages (otherwise 4027 permanently breaks the session) |
