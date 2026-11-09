@@ -300,6 +300,42 @@ export function makeReadImageRequest(ctx: Context) {
 }
 
 /** 注册 codeartsAuth 服务与 codearts LLM 路由（不注册斜杠命令）。 */
+/**
+ * 刷新器的**核心循环**（纯逻辑、可注入依赖 ⇒ 套件能测**同一份实现**，
+ * 而不是另写一份夹具）。
+ *
+ * ⚠️ 抽出来的唯一理由就是可测性：`refreshAllCatalogs` 是闭包内函数、依赖
+ * `modelAdapters` 与 `ctx`，套件没法直接调；而**测夹具不算测产品**（本仓库
+ * 踩过一次：真值表跑内联实现，源码改坏仍全绿）。
+ */
+export function refreshCatalogsOnce(deps: {
+  adapters: Record<string, unknown>
+  hasAccount: ((provider: string) => Promise<boolean>) | undefined
+  onError?: (tag: string, error: unknown) => void
+}): Promise<void> {
+  return (async () => {
+    for (const [tag, adapter] of Object.entries(deps.adapters)) {
+      const refresh = (adapter as { refreshCatalog?: () => Promise<void> }).refreshCatalog
+      if (typeof refresh !== 'function') continue
+      // ⚠️ **没配账号的渠道不刷**（见 `refreshAllCatalogs` 的报障说明）
+      if (deps.hasAccount !== undefined) {
+        let has = false
+        try {
+          has = await deps.hasAccount(tag)
+        } catch {
+          // 读凭据抛错 ⇒ 保守跳过（存储损坏不该刷出 15 条 warn）
+          has = false
+        }
+        if (!has) continue
+      }
+      try {
+        await refresh.call(adapter)
+      } catch (error) {
+        deps.onError?.(tag, error)
+      }
+    }
+  })()
+}
 export function apply(ctx: Context, config: { disableOpencode?: boolean; outlet?: ChannelOutlet } = {}): void {
   const network = createChannelFetch({ outlet: config.outlet })
   ctx.effect(() => () => { void network.close() })
@@ -1815,6 +1851,26 @@ const zcodeAdapter = registerZcodeLlm(ctx, {
    *    未接线的渠道会跳过（`undefined` 判据），不会报错。
    */
   let catalogRefreshInFlight = false
+  /**
+   * 该 provider 是否**有可解析的凭据**（供目录刷新做前置闸门）。
+   *
+   * ⚠️ 池或能力缺失时返回 `true`（**照旧刷新**，维持旧行为）：
+   * - 单测替身通常只 mock 少数方法，`hasLoggedInAccount` 可能不存在；
+   * - 判不出来时宁可多拉一次，也不要让真实用户的目录停止保鲜。
+   * ⚠️ 读凭据抛错时返回 `false`：存储损坏不该变成每 30 分钟 15 条 warn。
+   */
+
+
+  async function hasCatalogAccount(provider: string): Promise<boolean> {
+    const probe = (pool as { hasLoggedInAccount?: (p: string) => Promise<boolean> }).hasLoggedInAccount
+    if (typeof probe !== 'function') return true
+    try {
+      return await probe.call(pool, provider)
+    } catch {
+      return false
+    }
+  }
+
   async function refreshAllCatalogs(): Promise<void> {
     if (catalogRefreshInFlight) return
     // ⚠️ **TDZ 守卫**：本函数在 1803 行定义、`modelAdapters` 在 2204 行才赋值，
@@ -1825,20 +1881,23 @@ const zcodeAdapter = registerZcodeLlm(ctx, {
     catalogRefreshInFlight = true
     try {
       // 走 `modelAdapters` 而不是 `ctx.llm`：后者是 DSH 公开面、不认识
-      // `refreshCatalog`；而 `modelAdapters` 每项都是 `withDeadModelPruning`
-      // 的 Proxy —— 它对**其余成员原样透传并绑定 this** ⇒ 新方法自动透出。
-      for (const [tag, adapter] of Object.entries(modelAdapters)) {
-        const refresh = (adapter as { refreshCatalog?: () => Promise<void> }).refreshCatalog
-        if (typeof refresh !== 'function') continue
-        try {
-          await refresh.call(adapter)
-        } catch (error) {
+      // `refreshCatalog`；而 `modelAdapters` 每项都是 `withDeadModelPruning` 的
+      // Proxy —— 它对**其余成员原样透传并绑定 this** ⇒ 新方法自动透出。
+      await refreshCatalogsOnce({
+        adapters: modelAdapters,
+        // ⚠️ 闸门：**没配账号的渠道不刷**（2026-11-09 用户报障：未配 cline 账号，
+        // 却每 30 分钟刷「models.dev 拉取失败 / 无可用凭据」两条 warn）。
+        // 判据是 `hasLoggedInAccount(provider)`；能力缺失时传 undefined ⇒ 照旧刷新。
+        hasAccount: typeof (pool as { hasLoggedInAccount?: unknown }).hasLoggedInAccount === 'function'
+          ? (provider: string) => hasCatalogAccount(provider)
+          : undefined,
+        onError: (tag, error) => {
           ctx.logger?.warn?.(
             `[channel-pack] ${tag} 目录刷新失败（保留旧目录）：`
             + `${error instanceof Error ? error.message : String(error)}`,
           )
-        }
-      }
+        },
+      })
     } finally {
       catalogRefreshInFlight = false
     }

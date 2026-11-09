@@ -98,10 +98,28 @@ await step('④ index.ts 的定时器真的在调 refreshAllCatalogs（只写方
     '定时器回调必须调用 refreshAllCatalogs（否则 30 分钟刷新永不发生）')
   // 单飞
   assert.match(src, /catalogRefreshInFlight/, '应有单飞标记（防上一轮没跑完就叠第二轮）')
-  // 逐家容错
-  const fnSeg = src.slice(src.indexOf('async function refreshAllCatalogs'))
-  assert.match(fnSeg.slice(0, 2000), /catch \(error\)/, '逐家失败必须被捕获（一家失败不中断其余）')
-  assert.match(fnSeg.slice(0, 2000), /保留旧目录/, '失败日志应说明保留旧目录')
+  // 逐家容错 —— ⚠️ 按**结构**定位（函数体到下一个顶层 `async function`），
+  // 不用「前 N 字符」：注释一长就会把断言挤出窗口，造成假红（本条已踩过一次）。
+  // ⚠️ 逐家容错与账号闸门都在**抽出来的纯函数** `refreshCatalogsOnce` 里
+  //（为了套件能测同一份实现，而不是另写夹具）。故在这里断言纯函数体 + 接线。
+  const pureStart = src.indexOf('export function refreshCatalogsOnce')
+  assert.ok(pureStart > 0, '应有可测的 refreshCatalogsOnce（纯函数）')
+  const pureNext = src.indexOf('\nexport ', pureStart + 10)
+  const pureSeg = src.slice(pureStart, pureNext > 0 ? pureNext : pureStart + 4000)
+  assert.match(pureSeg, /catch \(error\)/, '逐家失败必须被捕获（一家失败不中断其余）')
+  assert.match(pureSeg, /deps\.onError/, '失败应上报给调用方（由它记日志）')
+  // ⚠️ 新增纪律：**没配账号的渠道不得刷新**（2026-11-09 用户报障：
+  // 未配 cline 账号却每 30 分钟刷「models.dev 拉取失败 / 无可用凭据」）
+  assert.match(pureSeg, /deps\.hasAccount/, '纯函数内必须有账号闸门')
+  assert.match(pureSeg, /if \(!has\) continue/, '没账号必须 continue（不刷新）')
+  // 接线：refreshAllCatalogs 必须把真实账号探针传进去
+  const fnStart = src.indexOf('async function refreshAllCatalogs')
+  const nextFn = src.indexOf('\n  async function ', fnStart + 10)
+  const fnSeg = src.slice(fnStart, nextFn > 0 ? nextFn : fnStart + 6000)
+  assert.match(fnSeg, /refreshCatalogsOnce\(\{/, 'refreshAllCatalogs 应调用纯函数')
+  assert.match(fnSeg, /hasCatalogAccount/, '接线时必须传账号闸门')
+  assert.match(fnSeg, /保留旧目录/, '失败日志应说明保留旧目录')
+  assert.match(src, /async function hasCatalogAccount\(/, '应有 hasCatalogAccount 辅助函数')
 })
 
 await step('⑤ 行为：真实挂载后刷新，listModels 看到变化 + 失败保留旧值', async () => {
@@ -197,6 +215,53 @@ await step('⑤ 行为：真实挂载后刷新，listModels 看到变化 + 失�
   const afterFail = await idsOf()
   assert.ok(afterFail.includes('glm-5.3'),
     `刷新失败后必须保留旧目录（不得退回兜底子表）。实得: ${afterFail.join(',')}`)
+})
+
+await step('⑥ 行为：无账号渠道**不会被刷新**（2026-11-09 报障：未配 cline 却每 30 分钟刷）', async () => {
+  // 用真实 AccountPool 验证 `hasLoggedInAccount` 的契约 —— 刷新器的闸门就挂在它上面。
+  const poolMod = await import('../vendor/channel-pack/pack.js')
+  assert.equal(typeof poolMod.refreshCatalogsOnce, 'function',
+    'pack.js 应导出 refreshCatalogsOnce（供套件验证刷新闸门）')
+
+  // 场景 A：完全没有账号 ⇒ 一次都不该刷
+  const callsA = []
+  await poolMod.refreshCatalogsOnce({
+    // adapters：每项都是「有 refreshCatalog 就记一笔」的替身
+    adapters: { cline: { refreshCatalog: async () => { callsA.push('cline') } },
+      zcode: { refreshCatalog: async () => { callsA.push('zcode') } } },
+    // hasAccount：全部 false（用户没配任何账号）
+    hasAccount: async () => false,
+  })
+  assert.deepEqual(callsA, [],
+    `没配账号的渠道**不得**触发目录刷新（实刷: ${callsA.join(',')}）—— `
+    + '那正是「未配 cline 却每 30 分钟刷 models.dev 失败」的成因')
+
+  // 场景 B：只有 buddy 有账号 ⇒ 只刷 buddy
+  const callsB = []
+  await poolMod.refreshCatalogsOnce({
+    adapters: { buddy: { refreshCatalog: async () => { callsB.push('buddy') } },
+      cline: { refreshCatalog: async () => { callsB.push('cline') } } },
+    hasAccount: async (p) => p === 'buddy',
+  })
+  assert.deepEqual(callsB, ['buddy'],
+    `只有配了账号的渠道才刷（实刷: ${callsB.join(',')}）`)
+
+  // 场景 C：hasAccount 抛错 ⇒ 保守跳过（存储损坏不该刷出 15 条 warn）
+  const callsC = []
+  await poolMod.refreshCatalogsOnce({
+    adapters: { cline: { refreshCatalog: async () => { callsC.push('cline') } } },
+    hasAccount: async () => { throw new Error('storage corrupt') },
+  })
+  assert.deepEqual(callsC, [], '读凭据抛错时应保守跳过，而不是硬刷')
+
+  // 场景 D：能力缺失（替身没有 hasLoggedInAccount）⇒ 照旧刷新（旧行为）
+  const callsD = []
+  await poolMod.refreshCatalogsOnce({
+    adapters: { buddy: { refreshCatalog: async () => { callsD.push('buddy') } } },
+    hasAccount: undefined,
+  })
+  assert.deepEqual(callsD, ['buddy'],
+    '判不出账号时必须照旧刷新（单测替身常见形态，不能让替身把刷新整体挡掉）')
 })
 
 if (failed > 0) { console.error(`\nchannel-catalog-refresh: ${failed} 项失败`); process.exit(1) }

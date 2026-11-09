@@ -72651,6 +72651,28 @@ function makeReadImageRequest(ctx) {
     }
   };
 }
+function refreshCatalogsOnce(deps) {
+  return (async () => {
+    for (const [tag2, adapter] of Object.entries(deps.adapters)) {
+      const refresh = adapter.refreshCatalog;
+      if (typeof refresh !== "function") continue;
+      if (deps.hasAccount !== void 0) {
+        let has = false;
+        try {
+          has = await deps.hasAccount(tag2);
+        } catch {
+          has = false;
+        }
+        if (!has) continue;
+      }
+      try {
+        await refresh.call(adapter);
+      } catch (error) {
+        deps.onError?.(tag2, error);
+      }
+    }
+  })();
+}
 function apply(ctx, config = {}) {
   const network = createChannelFetch({ outlet: config.outlet });
   ctx.effect(() => () => {
@@ -73531,22 +73553,32 @@ function apply(ctx, config = {}) {
     ["accio", (p) => accio.refreshAll(p)]
   ];
   let catalogRefreshInFlight = false;
+  async function hasCatalogAccount(provider) {
+    const probe = pool.hasLoggedInAccount;
+    if (typeof probe !== "function") return true;
+    try {
+      return await probe.call(pool, provider);
+    } catch {
+      return false;
+    }
+  }
   async function refreshAllCatalogs() {
     if (catalogRefreshInFlight) return;
     if (typeof modelAdapters === "undefined") return;
     catalogRefreshInFlight = true;
     try {
-      for (const [tag2, adapter] of Object.entries(modelAdapters)) {
-        const refresh = adapter.refreshCatalog;
-        if (typeof refresh !== "function") continue;
-        try {
-          await refresh.call(adapter);
-        } catch (error) {
+      await refreshCatalogsOnce({
+        adapters: modelAdapters,
+        // ⚠️ 闸门：**没配账号的渠道不刷**（2026-11-09 用户报障：未配 cline 账号，
+        // 却每 30 分钟刷「models.dev 拉取失败 / 无可用凭据」两条 warn）。
+        // 判据是 `hasLoggedInAccount(provider)`；能力缺失时传 undefined ⇒ 照旧刷新。
+        hasAccount: typeof pool.hasLoggedInAccount === "function" ? (provider) => hasCatalogAccount(provider) : void 0,
+        onError: (tag2, error) => {
           ctx.logger?.warn?.(
             `[channel-pack] ${tag2} \u76EE\u5F55\u5237\u65B0\u5931\u8D25\uFF08\u4FDD\u7559\u65E7\u76EE\u5F55\uFF09\uFF1A${error instanceof Error ? error.message : String(error)}`
           );
         }
-      }
+      });
     } finally {
       catalogRefreshInFlight = false;
     }
@@ -73839,6 +73871,7 @@ export {
   maybeClaimBonus,
   name,
   parseWindowsProxy,
+  refreshCatalogsOnce,
   rewriteTencentContentFingerprints,
   serializeTraeMessagesForTest,
   stripClineSnapshotSuffix,

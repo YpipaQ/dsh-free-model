@@ -12,12 +12,12 @@
 | --- | --- |
 | `index.js` | `a932bcb6bdeef608496071a60d1f9e8499997fca52765e0eb300171d8728aa57` |
 | `client.js` | `13332f9b4102e5cc7125998983126df7b50cfa6a32ef5e20aefc51aca0a5e820` |
-| `vendor/channel-pack/pack.js` | `9255642fdaf064b11e0f1e233b0d771419515e8803dbe0e173c0cb6a9f76bfba` |
+| `vendor/channel-pack/pack.js` | `2f9a8d58007fcec287c5f9be484b79adbfea8ec332bddc1ba01d52acb5877c19` |
 
 ⚠️ `pack.js` 的指纹随每次「刷新模型数据 / 移植上游修复」而变（它是构建产物）。
-上面的值对应**上游跟进第二批（2026-11-09：codearts UA/业务码 + zcode 3.17 身份块 + 第四条指纹 + cline 快照后缀）之后**的版本；
+上面的值对应**3.0.1（2026-11-09：目录刷新加账号闸门）之后**的版本；
 域名面结论未变，`scripts/egress-audit.mjs` 可随时重跑复验。
-（上一版 `b1d9d582…` 是目录自适应 + 12 项修复后的产物。）
+（上一版 `9255642f…` 是上游第二轮跟进后的产物。）
 
 ## 结论
 
