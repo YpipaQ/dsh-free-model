@@ -91,6 +91,8 @@ const suites = [
   ['channel-zcode-405', 'channel-zcode-405-test.mjs', []],
   // OfficeAce 每日签到：失败必须留痕 + 撤销占坑（否则本小时钉死、当天 1000 分白丢）。
   ['channel-officeace-checkin', 'channel-officeace-checkin-test.mjs', []],
+  // CodeArts：UA 覆盖（WAF 按 deepseek-harness/ 前缀拒发）+ 三业务码单列。
+  ['channel-codearts-ua-codes', 'channel-codearts-ua-codes-test.mjs', []],
   ['channel-network', 'channel-network-test.mjs', []],
 ].filter(([name]) => only === null || name.startsWith(only))
 

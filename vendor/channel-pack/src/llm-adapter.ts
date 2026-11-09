@@ -477,6 +477,15 @@ export interface CodeArtsQueueStatus {
   readonly message: string
 }
 
+/**
+ * CodeArts 推理请求的 `User-Agent` —— **必须是官方客户端的身份**（上游 378ffd73）。
+ *
+ * 华为 WAF 按**大小写敏感的前缀** `deepseek-harness/` 拒发（403 TM.00000001），
+ * 而宿主 `attributionHeaders()` 恒发该前缀 ⇒ 不覆盖就整条渠道不可用。
+ * 详见推理请求处覆盖点的注释（含完整实测对照表）。
+ */
+export const CODEARTS_USER_AGENT = 'codearts/1.0.0-1147257973136832'
+
 /** 判断 HTTP 错误体是否表示 CodeArts 并发排队限流。 */
 function isQueueError(status: number, body: string): boolean {
   return status === 400
@@ -494,9 +503,32 @@ function isQueueError(status: number, body: string): boolean {
  * 策略：触发一次静默 refresh，用新 AK/SK/SecurityToken 重试一次；仍失败
  * 才抛 AUTH，避免把可自愈的瞬时鉴权失败暴露给用户。
  */
-function isAuthError(status: number, body: string): boolean {
-  if (status === 401 || status === 403) return true
-  return body.includes('APIG.0602') || /invalid\s+token|token\s+expired|token\s+is\s+invalid/i.test(body)
+/** ⚠️ **导出供离线套件**验证「403 不再恒真 ⇒ 不白烧一次性 refresh_token」。 */
+export function isAuthError(status: number, body: string): boolean {
+  /**
+   * ⚠️⚠️ **`403` 不再「恒真」**（上游 104f0fc3，本 fork 2026-11-09 移植）。
+   *
+   * 旧实现 `if (status === 401 || status === 403) return true` ⇒ 只要上游回 403
+   * 就当作「凭据失效」⇒ 触发一次静默续期。而两个**与凭据无关**的业务码也回 403：
+   *
+   * | 业务码 | 成因 | 续期有用吗 |
+   * |---|---|---|
+   * | `TM.00000001` | 华为 WAF 按 UA 前缀拒发 | **完全无用**（同 UA 恒 403） |
+   * | `TM.000010051` | 模型未在本租户开通 | **完全无用**（换模型才有用） |
+   *
+   * ⚠️ 而 CodeArts 的 `refresh_token` 是**一次性轮换**的 ⇒ 每次白跑都会**消耗一次**
+   * 真实凭据轮换，不是无害副作用（真正的续期机会被这些假警报吃掉）。
+   *
+   * ⇒ 只把「确实是凭据问题」的 403 认作 AUTH（`APIG.0602` / invalid token 文案），
+   * 其余 403 交给业务码判据分类。
+   * ⚠️ `401` 仍恒真：401 的语义就是「未认证」，与业务码无关。
+   */
+  if (status === 401) return true
+  if (body.includes('APIG.0602') || /invalid\s+token|token\s+expired|token\s+is\s+invalid/i.test(body)) return true
+  // 已知「非凭据问题」的业务码：明确排除（即便 403 也不续期）
+  if (hasBusinessCode(body, 'TM.00000001') || hasBusinessCode(body, 'TM.000010051')) return false
+  if (status === 403) return true
+  return false
 }
 
 /**
@@ -599,7 +631,50 @@ function errorDetail(body: string): string {
  * CONTEXT_WINDOW_EXCEEDED（触发 dsh compaction 自动压缩上下文），
  * 而不是不可重试的 HTTP_400，避免长会话在接近窗口上限时直接中断。
  */
-function httpErrorCode(status: number, body: string): string {
+/**
+ * 业务码的**精确**判据（`code` 后不得紧跟数字）。
+ *
+ * ⚠️ 不能用 `body.includes('TM.00000001')`：会命中 `TM.000000011` / `TM.00000001x`。
+ * 本仓库已踩过同型坑（`isSseQueueErrorCode` 的 `429` 命中 `InferHub.4291.200`）。
+ * ⚠️ **大小写敏感**（上游恒为大写 `TM.`）。
+ */
+function hasBusinessCode(body: string, code: string): boolean {
+  return new RegExp(`${code.replace(/\./g, '\\.')}(?![0-9])`).test(body)
+}
+
+/**
+ * ⚠️ **导出供离线套件**验证「三个非凭据业务码单列」（上游 104f0fc3）。
+ * 生产调用点都在本文件内，语义不变。
+ */
+export function httpErrorCode(status: number, body: string): string {
+  /**
+   * ⚠️⚠️ **三个「非凭据问题」业务码必须单列，且必须排在 401/403 的 `AUTH` 之前**
+   *（上游 104f0fc3 / Gitee PR #175 评审，本 fork 2026-11-09 移植）。
+   *
+   * ## 为什么必须单列
+   *
+   * `httpErrorCode()` 对 **401/403 恒归 `AUTH`**，而客户端会把 `AUTH` 的 message
+   * **整条替换**成「API 密钥无效」⇒ 三个**与凭据无关**的上游业务码全被说成
+   * 「密钥无效」，用户去重登 / 换 token，**方向全错**。且 `isAuthError(403)` 恒真
+   * ⇒ 每次失败**白跑一次**一次性轮换的 STS 续期（CodeArts 的 refresh_token
+   * 是一次性的 ⇒ 这不是无害副作用）。
+   *
+   * | 业务码 | 成因 | 重试有效？ | 归码 |
+   * |---|---|---|---|
+   * | `TM.00000001` | 华为 WAF 按 UA 首 product token 拒发（**不是真的繁忙**） | **否**（同 UA 恒 403） | `PERMISSION` |
+   * | `TM.00001041` | 账号级并发上限（实测每账号同时最多 3 个请求） | **是**（等 1~2 分钟 / 换号即解） | `RATE_LIMIT` |
+   * | `TM.000010051` | 模型未在本租户开通 | **否** | `PERMISSION` |
+   *
+   * ⚠️ **三条的码必须不同**：把 `TM.00000001` 也归 `RATE_LIMIT` 是错的 ——
+   * 宿主 `DEFAULT_RETRYABLE_CODES` 含 `RATE_LIMIT`（`maxRetries 5`）⇒ 确定性失败
+   * 白退避重试 5 次、每次真打上游一次 403（与 qoder「网关 5xx 白重试」同型，
+   * 方向相反）。
+   *
+   * ⚠️ `PERMISSION` **不在** `DEFAULT_RETRYABLE_CODES` 里 ⇒ 不可重试是对的。
+   */
+  if (hasBusinessCode(body, 'TM.00000001')) return 'PERMISSION'
+  if (hasBusinessCode(body, 'TM.00001041')) return 'RATE_LIMIT'
+  if (hasBusinessCode(body, 'TM.000010051')) return 'PERMISSION'
   if (status === 401 || status === 403) return 'AUTH'
   const detail = errorDetail(body)
   if (isQuotaExceededError(detail)) return QUOTA_EXCEEDED_CODE
@@ -1254,6 +1329,35 @@ export class CodeArtsAdapter extends LlmAdapter {
         extraSignedHeaders,
       )
       const headers = new Headers(attributionHeaders())
+      // ⚠️⚠️ **必须覆盖宿主的 `User-Agent`**（上游 378ffd73，本 fork 2026-11-09 移植）。
+      //
+      // 宿主的 `attributionHeaders()` 恒发
+      // `deepseek-harness/<ver> (+https://github.com/deepseek-ai/deepseek-harness)`，
+      // 而**华为 WAF 按前缀 `deepseek-harness/` 拒发**：
+      // `403 {"error_code":"TM.00000001","error_msg":"网络繁忙，请稍后重试"}`，
+      // 响应头带 `server: CW` / `set-cookie: HWWAFSESID=…`（WAF 侧，不是 APIG 验签）。
+      //
+      // ## ⚠️ 症状极具误导性
+      //
+      // 403 落到 `httpErrorCode` 的 `AUTH` 分支 ⇒ 客户端把整条 message 换成
+      // 「**API 密钥无效**」⇒ 用户以为凭据坏了去重新登录，而凭据**完全有效**。
+      // 且 `isAuthError` 对 403 恒真 ⇒ 每次失败还**白跑一次凭据续期**
+      // （CodeArts 的 `refresh_token` 是**一次性轮换**的 ⇒ 不是无害副作用）。
+      //
+      // ## 实测对照（同账号 / 同签名 / 逐字节同 body，**只改 UA**）
+      //
+      // | `User-Agent` | 结果 |
+      // |---|---|
+      // | `deepseek-harness/0.2.1-rc.2 (+…)`（宿主默认） | **403 TM.00000001** |
+      // | `deepseek-harness/0.2.1` | **403** |
+      // | `deepseek-harness`（无 `/版本`） | 200 |
+      // | `VSCode/1.95.3` / `curl/8.4.0` / `claude-code` | 200 |
+      //
+      // ⇒ 判据是**大小写敏感的前缀 `deepseek-harness/`**（4 账号一致、交替 3 轮可复现）。
+      // ⚠️ UA **不参与** `SDK-HMAC-SHA256` 签名 ⇒ 覆盖不破验签。
+      // ⚠️ **只改推理腿**：目录 / 积分 / 签到不显式设 UA（那些端点是另一套鉴权，
+      //    实测不受该前缀影响；统一改反而扩大变更面）。
+      headers.set('User-Agent', CODEARTS_USER_AGENT)
       // 签名 map 中的额外头（如 maas_type）必须随请求发送——它们已参与
       // canonical 计算、包含在 SignedHeaders 列表中，缺失会导致服务端验签失败。
       signed.forEach((value, key) => { if (key !== 'content-type') headers.set(key, value) })

@@ -86,13 +86,13 @@ function decodeBase64(encoded, url = false) {
     bytes[i] = binary.charCodeAt(i);
   return bytes;
 }
-var encoder, decoder, strictDecoder, MAX_INT32, NON_ASCII;
+var encoder, decoder, strictDecoder, UINT32_RANGE, NON_ASCII;
 var init_buffer_utils = __esm({
   "../../../../usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules/jose/dist/webapi/lib/buffer_utils.js"() {
     encoder = new TextEncoder();
     decoder = new TextDecoder();
     strictDecoder = new TextDecoder("utf-8", { fatal: true });
-    MAX_INT32 = 2 ** 32;
+    UINT32_RANGE = 2 ** 32;
     NON_ASCII = /[^\x00-\x7f]/;
   }
 });
@@ -217,15 +217,15 @@ var init_validate = __esm({
 
 // ../../../../usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules/jose/dist/webapi/lib/key.js
 async function prepareKey(entry, key, usage) {
-  const { alg, secret } = entry, privateKey = usage === "decrypt" || usage === "sign";
+  const { alg, secret } = entry, requiresPrivateKey = usage === "decrypt" || usage === "sign";
   if (secret && key instanceof Uint8Array)
     return key;
   let normalized, keyObject;
   if (isObject(key)) {
     if (normalized = normalizeJwk(key), typeof normalized.kty != "string")
       throw invalidKeyType(alg, key, secret);
-    if (!(secret ? normalized.kty === "oct" && typeof normalized.k == "string" : normalized.kty !== "oct" && (privateKey ? normalized.kty === "AKP" && typeof normalized.priv == "string" || typeof normalized.d == "string" : normalized.d === void 0 && normalized.priv === void 0)))
-      throw new TypeError(secret ? 'JSON Web Key for symmetric algorithms must have JWK "kty" (Key Type) equal to "oct" and the JWK "k" (Key Value) present' : `JSON Web Key for this operation must be a ${privateKey ? "private" : "public"} JWK`);
+    if (!(secret ? normalized.kty === "oct" && typeof normalized.k == "string" : normalized.kty !== "oct" && (requiresPrivateKey ? normalized.kty === "AKP" && typeof normalized.priv == "string" || typeof normalized.d == "string" : normalized.d === void 0 && normalized.priv === void 0)))
+      throw new TypeError(secret ? 'JSON Web Key for symmetric algorithms must have JWK "kty" (Key Type) equal to "oct" and the JWK "k" (Key Value) present' : `JSON Web Key for this operation must be a ${requiresPrivateKey ? "private" : "public"} JWK`);
     if (jwkMatchesOp(entry, normalized, usage), normalized.kty === "oct")
       return decode(normalized.k);
     if (!Object.isFrozen(key)) {
@@ -235,7 +235,7 @@ async function prepareKey(entry, key, usage) {
   } else {
     if (!isKeyLike(key))
       throw invalidKeyType(alg, key, secret);
-    const expectedType = secret ? "secret" : privateKey ? "private" : "public";
+    const expectedType = secret ? "secret" : requiresPrivateKey ? "private" : "public";
     if (key.type !== expectedType && (secret || ["secret", "public", "private"].includes(key.type)))
       throw new TypeError(`${tag(key)} instances must be of type "${expectedType}" for the ${alg} algorithm`);
     if (isCryptoKey(key))
@@ -513,8 +513,8 @@ function eddsa() {
     usages: sig
   };
 }
-function mldsa(bits) {
-  const subtle = { name: `ML-DSA-${bits}` };
+function mldsa(parameterSet) {
+  const subtle = { name: `ML-DSA-${parameterSet}` };
   return {
     kty: ["AKP"],
     subtle,
@@ -564,8 +564,8 @@ function secs(str) {
   typeof str != "string" && invalidDuration();
   const matched = REGEX.exec(str);
   (!matched || matched[4] && matched[1]) && invalidDuration();
-  const value = parseFloat(matched[2]), numericDate2 = Math.round(value * multipliers[matched[3][0].toLowerCase()]);
-  return Number.isFinite(numericDate2) || invalidDuration(), matched[1] === "-" || matched[4] === "ago" ? -numericDate2 : numericDate2;
+  const value = parseFloat(matched[2]), durationSeconds = Math.round(value * multipliers[matched[3][0].toLowerCase()]);
+  return Number.isFinite(durationSeconds) || invalidDuration(), matched[1] === "-" || matched[4] === "ago" ? -durationSeconds : durationSeconds;
 }
 function validateInput(label, input) {
   if (!Number.isFinite(input))
@@ -583,19 +583,19 @@ function validateAudienceClaim(value) {
 function numericDate(value, label) {
   return typeof value == "number" ? validateInput(label, value) : value instanceof Date ? validateInput(label, epoch(value)) : epoch(/* @__PURE__ */ new Date()) + secs(value);
 }
-function producerPayload(producer) {
-  return producerPayloads.get(producer);
+function producerClaimsSet(producer) {
+  return producerClaimsSets.get(producer);
 }
-function jwtData(producer) {
-  const payload = producerPayload(producer);
+function jwtClaimsSetBytes(producer) {
+  const claimsSet = producerClaimsSet(producer);
   for (const claim of ["iat", "nbf", "exp"]) {
-    const value = payload[claim];
+    const value = claimsSet[claim];
     if (typeof value == "number" && !Number.isFinite(value))
       throw new TypeError(`"${claim}" claim must be a finite number`);
   }
-  return encoder.encode(JSON.stringify(payload));
+  return encoder.encode(JSON.stringify(claimsSet));
 }
-var epoch, multipliers, REGEX, producerPayloads, JWTClaimsBuilder;
+var epoch, multipliers, REGEX, producerClaimsSets, JWTClaimsBuilder;
 var init_jwt_claims_set = __esm({
   "../../../../usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules/jose/dist/webapi/lib/jwt_claims_set.js"() {
     init_buffer_utils();
@@ -611,32 +611,32 @@ var init_jwt_claims_set = __esm({
     };
     REGEX = /^(\+|\-)? ?(\d+|\d+\.\d+) ?(seconds?|secs?|s|minutes?|mins?|m|hours?|hrs?|h|days?|d|weeks?|w|years?|yrs?|y)(?: (ago|from now))?$/i;
     JWTClaimsBuilder = class {
-      constructor(payload = {}) {
-        if (!isObject(payload))
+      constructor(claimsSet = {}) {
+        if (!isObject(claimsSet))
           throw new TypeError("JWT Claims Set MUST be an object");
-        (producerPayloads ||= /* @__PURE__ */ new WeakMap()).set(this, structuredClone(payload));
+        (producerClaimsSets ||= /* @__PURE__ */ new WeakMap()).set(this, structuredClone(claimsSet));
       }
       setIssuer(value) {
-        return validateStringClaim("iss", value), producerPayload(this).iss = value, this;
+        return validateStringClaim("iss", value), producerClaimsSet(this).iss = value, this;
       }
       setSubject(value) {
-        return validateStringClaim("sub", value), producerPayload(this).sub = value, this;
+        return validateStringClaim("sub", value), producerClaimsSet(this).sub = value, this;
       }
       setAudience(value) {
-        return validateAudienceClaim(value), producerPayload(this).aud = value, this;
+        return validateAudienceClaim(value), producerClaimsSet(this).aud = value, this;
       }
       setJti(value) {
-        return validateStringClaim("jti", value), producerPayload(this).jti = value, this;
+        return validateStringClaim("jti", value), producerClaimsSet(this).jti = value, this;
       }
       setNotBefore(value) {
-        return producerPayload(this).nbf = numericDate(value, "setNotBefore"), this;
+        return producerClaimsSet(this).nbf = numericDate(value, "setNotBefore"), this;
       }
       setExpirationTime(value) {
-        return producerPayload(this).exp = numericDate(value, "setExpirationTime"), this;
+        return producerClaimsSet(this).exp = numericDate(value, "setExpirationTime"), this;
       }
       setIssuedAt(value) {
-        const payload = producerPayload(this);
-        return value === void 0 ? payload.iat = epoch(/* @__PURE__ */ new Date()) : typeof value == "string" ? payload.iat = validateInput("setIssuedAt", epoch(/* @__PURE__ */ new Date()) + secs(value)) : payload.iat = numericDate(value, "setIssuedAt"), this;
+        const claimsSet = producerClaimsSet(this);
+        return value === void 0 ? claimsSet.iat = epoch(/* @__PURE__ */ new Date()) : typeof value == "string" ? claimsSet.iat = validateInput("setIssuedAt", epoch(/* @__PURE__ */ new Date()) + secs(value)) : claimsSet.iat = numericDate(value, "setIssuedAt"), this;
       }
     };
   }
@@ -644,10 +644,10 @@ var init_jwt_claims_set = __esm({
 
 // ../../../../usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules/jose/dist/webapi/lib/jws_sign.js
 async function createSignature(input, key, rejectUnencoded) {
-  let [payload, protectedHeader, unprotectedHeader, crit] = input, protectedHeaderString = "";
+  let [payload, protectedHeader, unprotectedHeader, crit] = input, encodedProtectedHeader = "";
   if (protectedHeader !== void 0) {
     const normalized = serializeJoseHeader(JWSInvalid, protectedHeader);
-    protectedHeader = normalized[0], protectedHeaderString = encode2(normalized[1]);
+    protectedHeader = normalized[0], encodedProtectedHeader = encode2(normalized[1]);
   }
   if (unprotectedHeader !== void 0 && (unprotectedHeader = serializeJoseHeader(JWSInvalid, unprotectedHeader)[0]), !protectedHeader && !unprotectedHeader)
     throw new JWSInvalid("either setProtectedHeader or setUnprotectedHeader must be called before #sign()");
@@ -661,19 +661,19 @@ async function createSignature(input, key, rejectUnencoded) {
   if (typeof alg != "string" || !alg)
     throw new JWSInvalid('JWS "alg" (Algorithm) Header Parameter missing or invalid');
   const entry = jwsAlgorithm(alg);
-  let payloadS = "", payloadB = payload, data;
+  let encodedPayload = "", signingPayload = payload, signingInput;
   if (b642) {
-    const encoded = input[4];
-    encoded ? (payloadS = encoded[0] ??= encode2(payload), payloadB = encoded[1] ??= encode(payloadS)) : (payloadS = encode2(payload), data = encoder.encode(`${protectedHeaderString}.${payloadS}`));
+    const encodedPayloadCache = input[4];
+    encodedPayloadCache ? (encodedPayload = encodedPayloadCache[0] ??= encode2(payload), signingPayload = encodedPayloadCache[1] ??= encode(encodedPayload)) : (encodedPayload = encode2(payload), signingInput = encoder.encode(`${encodedProtectedHeader}.${encodedPayload}`));
   }
-  data ??= concat(encode(protectedHeaderString), encode("."), payloadB);
-  const k = await rawKey(await prepareKey(entry, key, "sign"), entry.subtle, "sign");
-  entry.minRsaBits && checkModulusLength(entry.alg, k);
+  signingInput ??= concat(encode(encodedProtectedHeader), encode("."), signingPayload);
+  const signingKey = await rawKey(await prepareKey(entry, key, "sign"), entry.subtle, "sign");
+  entry.minRsaBits && checkModulusLength(entry.alg, signingKey);
   const jws = {
-    signature: encode2(new Uint8Array(await crypto.subtle.sign(entry.signing, k, data))),
-    payload: payloadS
+    signature: encode2(new Uint8Array(await crypto.subtle.sign(entry.signing, signingKey, signingInput))),
+    payload: encodedPayload
   };
-  return protectedHeader && (jws.protected = protectedHeaderString), unprotectedHeader && (jws.header = unprotectedHeader), [jws, b642];
+  return protectedHeader && (jws.protected = encodedProtectedHeader), unprotectedHeader && (jws.header = unprotectedHeader), [jws, b642];
 }
 async function createCompactSignature(payload, protectedHeader, crit, key, rejectUnencoded) {
   const [jws] = await createSignature([payload, protectedHeader, void 0, crit], key, rejectUnencoded);
@@ -705,7 +705,7 @@ var init_sign = __esm({
         return assertNotSet(this.#protectedHeader, "setProtectedHeader"), this.#protectedHeader = protectedHeader, this;
       }
       async sign(key, options) {
-        return createCompactSignature(jwtData(this), this.#protectedHeader, options?.crit, key, () => {
+        return createCompactSignature(jwtClaimsSetBytes(this), this.#protectedHeader, options?.crit, key, () => {
           throw new JWTInvalid("JWTs MUST NOT use unencoded payload");
         });
       }
@@ -33583,12 +33583,16 @@ function codeartsQuotaExhaustedMessage(model, resetAtMs, nowMs = Date.now()) {
   const when = formatResetIn(resetAtMs, nowMs);
   return `codearts: \u6A21\u578B ${model} \u7684\u514D\u8D39\u989D\u5EA6\uFF08benefit\uFF09\u5DF2\u7528\u5C3D\uFF0C\u9884\u8BA1 ${when}\u540E\u91CD\u7F6E\uFF08\u6309 UTC+8 \u81EA\u7136\u65E5\u7ED3\u7B97\uFF0C\u9884\u8BA1 ${new Date(resetAtMs).toISOString()}\uFF09\u3002\u53EF\u6539\u7528\u5176\u5B83\u6A21\u578B\uFF0C\u6216\u5728 Channel Pack \u7684 CodeArts \u9762\u677F\u5207\u6362/\u6DFB\u52A0\u8D26\u53F7\u3002`;
 }
+var CODEARTS_USER_AGENT = "codearts/1.0.0-1147257973136832";
 function isQueueError(status, body) {
   return status === 400 && (body.includes("TM.00001041") || /peak\s+usage|try\s+again\s+after|peak\s+hours/i.test(body) || /high\s+demand|too\s+many\s+requests/i.test(body));
 }
 function isAuthError(status, body) {
-  if (status === 401 || status === 403) return true;
-  return body.includes("APIG.0602") || /invalid\s+token|token\s+expired|token\s+is\s+invalid/i.test(body);
+  if (status === 401) return true;
+  if (body.includes("APIG.0602") || /invalid\s+token|token\s+expired|token\s+is\s+invalid/i.test(body)) return true;
+  if (hasBusinessCode(body, "TM.00000001") || hasBusinessCode(body, "TM.000010051")) return false;
+  if (status === 403) return true;
+  return false;
 }
 function isSseQueueErrorCode(code) {
   return code === "TM.00001041" || /81111|TPM|(^|[^0-9])429([^0-9]|$)|rate.?limit|too many requests|排队|限流/i.test(code);
@@ -33613,7 +33617,13 @@ function errorDetail(body) {
   }
   return body;
 }
+function hasBusinessCode(body, code) {
+  return new RegExp(`${code.replace(/\./g, "\\.")}(?![0-9])`).test(body);
+}
 function httpErrorCode(status, body) {
+  if (hasBusinessCode(body, "TM.00000001")) return "PERMISSION";
+  if (hasBusinessCode(body, "TM.00001041")) return "RATE_LIMIT";
+  if (hasBusinessCode(body, "TM.000010051")) return "PERMISSION";
   if (status === 401 || status === 403) return "AUTH";
   const detail = errorDetail(body);
   if (isQuotaExceededError(detail)) return QUOTA_EXCEEDED_CODE;
@@ -34057,6 +34067,7 @@ var CodeArtsAdapter = class extends LlmAdapter {
         extraSignedHeaders
       );
       const headers = new Headers(attributionHeaders());
+      headers.set("User-Agent", CODEARTS_USER_AGENT);
       signed.forEach((value, key) => {
         if (key !== "content-type") headers.set(key, value);
       });
@@ -73750,10 +73761,13 @@ function apply(ctx, config = {}) {
   ctx.provide("accountPool", pool);
 }
 export {
+  CODEARTS_USER_AGENT,
   Config,
   apply,
   buildZcodeSystemBlocks,
   channelProxyBypassed,
+  httpErrorCode as codeartsHttpErrorCode,
+  isAuthError as codeartsIsAuthError,
   createChannelFetch,
   httpErrorCodeForZcode,
   inject,
