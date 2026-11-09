@@ -95,6 +95,8 @@ const suites = [
   ['channel-codearts-ua-codes', 'channel-codearts-ua-codes-test.mjs', []],
   // ZCode：版本 × 身份块必须同代（跨代即 405+3012，全量用户不可用）。
   ['channel-zcode-version-generation', 'channel-zcode-version-generation-test.mjs', []],
+  // Cline：模型带日期/快照后缀时继承基底能力（否则图片能力/窗口丢失）。
+  ['channel-cline-snapshot-suffix', 'channel-cline-snapshot-suffix-test.mjs', []],
   ['channel-network', 'channel-network-test.mjs', []],
 ].filter(([name]) => only === null || name.startsWith(only))
 

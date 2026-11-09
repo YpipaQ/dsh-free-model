@@ -103,6 +103,7 @@ export { buildZcodeSystemBlocks, withCallerSystem } from './zcode-identity.js'
 export { ZCODE_INFERENCE_MIN_APP_VERSION, zcodeInferenceAppVersion } from './zcode-upstream.js'
 // ⚠️ **仅供离线套件**：腾讯系内容指纹改写（验证「窄改写：只换头名、字段逐字保留」）。
 export { rewriteTencentContentFingerprints } from './openai-gateway/tencent-fingerprint.js'
+export { findClineModelsDevEntry, stripClineSnapshotSuffix } from './cline-models-dev.js'
 export { httpErrorCodeForZcode } from './zcode-adapter.js'
 export { httpErrorCode as codeartsHttpErrorCode, isAuthError as codeartsIsAuthError, CODEARTS_USER_AGENT } from './llm-adapter.js'
 export { maybeClaimBonus } from './officeace-auth.js'

@@ -161,6 +161,60 @@ export function parseClineModelsDev(value: unknown): Map<string, ClineModelsDevE
  * ⚠️ **不合并 `maxTokens`**（口径 3，见模块头）。
  * ⚠️ **不覆盖**任何已有值：策展/网关数据优先于社区目录。
  */
+/**
+ * 带**日期/快照后缀**的模型 id（上游 25e332fe / issue #18，本 fork 2026-11-09 移植）。
+ *
+ * ⚠️ 只认两种**有日历意义**的形态：
+ * - 4 位 `MMDD`（`-1017` = 10 月 17 日）；
+ * - 8 位 `YYYYMMDD`（`-20241022`）。
+ *
+ * ⚠️⚠️ **上游对抗审计的修正：原正则 `-\d{4}` 是错的** —— 它会把 `-4096` /
+ * `-1024` 这种**上下文长度数字**当快照剥掉，从而**误继承基底的图片能力**
+ *（把图片发给不支持图的模型 ⇒ 静默失败或幻觉）。
+ *
+ * `-2024`（只有年份）、`-123`（3 位）、`-v2`、`-1017-suffix` 都**不剥** ——
+ * 它们更可能是版本号/尺寸而不是快照日期，猜错会把不同模型并成一个。
+ */
+const SNAPSHOT_SUFFIX = /-(?:(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])|(?:19|20)\d{6})$/
+
+/** 剥掉末尾的快照后缀（形如 `-1017` / `-20241022`）；无后缀时原样返回。 */
+export function stripClineSnapshotSuffix(id: string): string {
+  return id.replace(SNAPSHOT_SUFFIX, '')
+}
+
+/**
+ * 在 models.dev 目录里查一个模型：**先精确、再剥快照后缀查基底**。
+ *
+ * ## 为什么必须有
+ *
+ * 上游常给模型加日期快照后缀（`qwen2.5-coder-7b-instruct-1017`），而 models.dev
+ * 只登记**基底** id。精确匹配失败后：
+ *
+ * - `contextWindow` / `name` / **`supportsImage`** 全部丢失；
+ * - `supportsImage` 变成「未知」⇒ 宿主据此**放行图片** ⇒ 发到不支持图的服务端
+ *   （静默失败或幻觉 —— 最难排查的形态）。
+ *
+ * 返回的条目**沿用基底能力**，但 `id` 是请求的那个、`name` 带上后缀
+ *（避免两个不同快照在 UI 上同名）。
+ */
+export function findClineModelsDevEntry(
+  id: string,
+  dev: ReadonlyMap<string, ClineModelsDevEntry>,
+): ClineModelsDevEntry | undefined {
+  const exact = dev.get(id)
+  if (exact !== undefined) return exact
+  const baseId = stripClineSnapshotSuffix(id)
+  if (baseId === id) return undefined
+  const base = dev.get(baseId)
+  if (base === undefined) return undefined
+  const suffix = id.slice(baseId.length + 1)
+  return {
+    ...base,
+    id,
+    ...base.name !== undefined ? { name: `${base.name} (${suffix})` } : {},
+  }
+}
+
 export function applyModelsDevCatalog(
   models: readonly ClineModel[],
   dev: ReadonlyMap<string, ClineModelsDevEntry>,
@@ -204,7 +258,9 @@ export function applyModelsDevCatalog(
   models.forEach((model, index) => { lastIndexOfPrefix.set(prefixOf(model.id), index) })
 
   models.forEach((model, index) => {
-    const entry = dev.get(model.id)
+    // ⚠️ 用 `findClineModelsDevEntry`（先精确、再剥快照后缀）：带 `-1017` 这类
+    //    日期后缀的模型必须继承基底的能力，否则图片模态/窗口会被误杀。
+    const entry = findClineModelsDevEntry(model.id, dev)
     out.push(entry === undefined
       ? model
       : {

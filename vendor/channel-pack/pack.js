@@ -42135,6 +42135,24 @@ function parseClineModelsDev(value) {
   }
   return out;
 }
+var SNAPSHOT_SUFFIX = /-(?:(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])|(?:19|20)\d{6})$/;
+function stripClineSnapshotSuffix(id) {
+  return id.replace(SNAPSHOT_SUFFIX, "");
+}
+function findClineModelsDevEntry(id, dev) {
+  const exact = dev.get(id);
+  if (exact !== void 0) return exact;
+  const baseId = stripClineSnapshotSuffix(id);
+  if (baseId === id) return void 0;
+  const base = dev.get(baseId);
+  if (base === void 0) return void 0;
+  const suffix = id.slice(baseId.length + 1);
+  return {
+    ...base,
+    id,
+    ...base.name !== void 0 ? { name: `${base.name} (${suffix})` } : {}
+  };
+}
 function applyModelsDevCatalog(models, dev) {
   if (dev.size === 0) return [...models];
   const out = [];
@@ -42172,7 +42190,7 @@ function applyModelsDevCatalog(models, dev) {
     lastIndexOfPrefix.set(prefixOf(model.id), index);
   });
   models.forEach((model, index) => {
-    const entry = dev.get(model.id);
+    const entry = findClineModelsDevEntry(model.id, dev);
     out.push(entry === void 0 ? model : {
       ...model,
       // 网关把 id 当名字下发时（`name === id`）才用可读名替换。
@@ -73813,6 +73831,7 @@ export {
   httpErrorCode as codeartsHttpErrorCode,
   isAuthError as codeartsIsAuthError,
   createChannelFetch,
+  findClineModelsDevEntry,
   httpErrorCodeForZcode,
   inject,
   makeReadImage,
@@ -73822,6 +73841,7 @@ export {
   parseWindowsProxy,
   rewriteTencentContentFingerprints,
   serializeTraeMessagesForTest,
+  stripClineSnapshotSuffix,
   withCallerSystem,
   zcodeInferenceAppVersion
 };
