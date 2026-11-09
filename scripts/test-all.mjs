@@ -93,6 +93,8 @@ const suites = [
   ['channel-officeace-checkin', 'channel-officeace-checkin-test.mjs', []],
   // CodeArts：UA 覆盖（WAF 按 deepseek-harness/ 前缀拒发）+ 三业务码单列。
   ['channel-codearts-ua-codes', 'channel-codearts-ua-codes-test.mjs', []],
+  // ZCode：版本 × 身份块必须同代（跨代即 405+3012，全量用户不可用）。
+  ['channel-zcode-version-generation', 'channel-zcode-version-generation-test.mjs', []],
   ['channel-network', 'channel-network-test.mjs', []],
 ].filter(([name]) => only === null || name.startsWith(only))
 

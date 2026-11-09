@@ -80,11 +80,86 @@ export const ZCODE_CLIENT_CONFIGS_URL = `${ZCODE_ORIGIN}/api/v1/client/configs`
  * （判据是请求体里的 system 内容），但它们仍是「像官方客户端」的一部分，
  * 且 `X-Device-Mid` **是硬需求**（缺它 billing 全家桶回 400）。
  */
+/**
+ * **推理**路径的最低客户端版本。
+ *
+ * ## ⚠️⚠️ 本常量与 `zcode-identity.ts` 的身份块**必须同代**
+ *
+ * 上游把「版本号」与「system 身份块文本」当**同一代**校验，**跨代即
+ * `405 + {"code":3012,"msg":"request has been blocked due to unusual activity."}`**
+ *（与账号 / IP / 频率 / 其余头都无关）。真机 2×2（同 URL、同 18 个头、同 body
+ * 形状，只改这两个变量，8 发）：
+ *
+ * | `X-ZCode-App-Version` | 身份块 | 结果 |
+ * |---|---|---|
+ * | `3.16.3` | 3.16 文本 | **200** ×3 |
+ * | `3.17.2` | 3.16 文本 | **405 + 3012** ×2 |
+ * | `3.16.3` | 3.17 文本 | **405 + 3012** ×3 |
+ * | `3.17.1` / `3.17.2` | 3.17 文本 | **200** ×2 |
+ *
+ * ## 为什么「升级后必现」（Issue #45）
+ *
+ * 插件原先发 `credential.app_version ?? 兜底值` —— 官方客户端 11-02 升级到 3.17.2
+ * 后，**凭据里的 `app_version` 也变新** ⇒ 发「新版本 + 旧身份块」⇒ 跨代 ⇒
+ * 报障者「从未成功过一次」。
+ *
+ * ⇒ 本值随身份块一起抬到 **`3.17.1`**（上游本机官方客户端实测 200）。
+ *
+ * ⚠️ **改本常量必须同改** `zcode-identity.ts` 的 `OFFICIAL_CLI_PREFIX` /
+ * `OFFICIAL_STABLE_SECTIONS`，**反之亦然** —— 改一处漏一处就是**全量用户 3012**。
+ */
+export const ZCODE_INFERENCE_MIN_APP_VERSION = '3.17.1'
+
+/** 合法的客户端版本号形态（`major.minor.patch`，纯数字、**无前导零**）。 */
+const ZCODE_APP_VERSION_PATTERN = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/
+
+/** 逐段比较两个 `major.minor.patch`；任一段非数字按 0 处理。 */
+function compareZcodeAppVersion(a: string, b: string): number {
+  const segments = (value: string): number[] =>
+    value.split('.').map((part) => {
+      const match = /^\s*(\d+)/.exec(part)
+      return match === null ? 0 : Number(match[1])
+    })
+  const left = segments(a)
+  const right = segments(b)
+  const count = Math.max(left.length, right.length)
+  for (let index = 0; index < count; index += 1) {
+    const l = left[index] ?? 0
+    const r = right[index] ?? 0
+    if (l !== r) return l - r
+  }
+  return 0
+}
+
+/**
+ * **推理**路径实际发出的客户端版本（`User-Agent` / `X-ZCode-App-Version` 同源）。
+ *
+ * 语义：取「凭据里的版本」与 {@link ZCODE_INFERENCE_MIN_APP_VERSION} 的**较大者**；
+ * 凭据里的版本不是干净 semver（含脏值/空串）时直接用门槛值。
+ *
+ * ⚠️ `Headers()` 对非法头值抛 `TypeError`（`"3.16.3\r\nX-Injected: 1"` 实测如此）
+ * ⇒ 这份格式校验**是安全闸，不只是格式偏好**。
+ */
+export function zcodeInferenceAppVersion(
+  credential: Pick<ZcodeCredential, 'app_version'>,
+): string {
+  const stored = typeof credential.app_version === 'string' ? credential.app_version.trim() : ''
+  if (!ZCODE_APP_VERSION_PATTERN.test(stored)) return ZCODE_INFERENCE_MIN_APP_VERSION
+  return compareZcodeAppVersion(stored, ZCODE_INFERENCE_MIN_APP_VERSION) < 0
+    ? ZCODE_INFERENCE_MIN_APP_VERSION
+    : stored
+}
+
 export function buildZcodeHeaders(
   credential: Pick<ZcodeCredential, 'device_mid' | 'app_version'>,
   options: { authorization?: string; json?: boolean; captcha?: { param: string; region: string } } = {},
 ): Record<string, string> {
-  const appVersion = credential.app_version ?? ZCODE_APP_VERSION_FALLBACK
+  /**
+   * ⚠️ **推理头必须走门控**（上游 e541c582 / Issue #45）：
+   * 直接取 `credential.app_version` 会发出「版本 3.17.2 + 旧身份块」这种**跨代**组合
+   * ⇒ 上游恒回 405 + 3012。门控取「凭据版本 与 3.17.1 的较大者」。
+   */
+  const appVersion = zcodeInferenceAppVersion(credential)
   const headers: Record<string, string> = {
     'User-Agent': `ZCode/${appVersion}`,
     'HTTP-Referer': ZCODE_ORIGIN,
