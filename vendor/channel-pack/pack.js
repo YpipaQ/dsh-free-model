@@ -34902,6 +34902,28 @@ var CONTENT_FINGERPRINTS = [
     find: 'You are interacting with the user through the DeepSeek Harness Web GUI whose URL the runtime context names. When the user refers to "this page", "this GUI", or "this app" without naming another target, they mean this GUI.',
     replace: 'You are interacting with the user through the DeepSeek Harness Web GUI whose URL the runtime context names. When the user refers to "this page", "the GUI", or "this app" without naming another target, they mean the GUI.',
     note: "2026-10-29 \u672C\u673A\u4E8C\u5206\u5B9A\u4F4D\uFF08\u4E0A\u6E38\u5C1A\u672A\u767B\u8BB0\uFF09\uFF1A221 \u5B57\u7B26\u5B57\u9762\u91CF\u3001220 \u653E\u884C\uFF1B\u524D\u4E24\u6761\u5DF2\u6539\u5199\u4F46\u6574\u6BB5\u4ECD 400 \u65F6\u903C\u51FA\u6765\u7684\u7B2C\u4E09\u6761\uFF1B\u6539 this GUI\u2192the GUI \u5B9E\u6D4B 200"
+  },
+  {
+    /**
+     * ★ **Claude Code SDK 的计费头字样**（上游 `84d5f078`，本 fork 2026-11-09 移植）。
+     *
+     * `copilot.tencent.com` 对该字样返回 **400/11128（内容级）**，与账号 / 额度 /
+     * 渠道配置无关；换普通客户端或**去掉该词**均 200。
+     *
+     * Claude Code SDK 入口会把计费头写进 **system 正文**：
+     * `x-anthropic-billing-header: cc_version=...; cc_entrypoint=sdk-ts;`
+     *
+     * ⚠️ 改写**刻意极窄**：只把 `x-anthropic-billing-header` 这一个**头名字面量**
+     * 换成 `x-client-billing-header`，字段与取值**逐字保留**。
+     * - 不泛化成「所有 `x-anthropic-*`」：那会连正文里真正在讨论 HTTP 头的内容也改，
+     *   且会误导后续排查（把无关字样记成本条命中）；
+     * - 不动 `cc_version=…` / `cc_entrypoint=sdk-ts`：实测**只有头名**是判据。
+     *
+     * ⚠️ **非腾讯系渠道不变**：本表只对 `TENCENT_PROVIDERS`（buddy / workbuddy）生效。
+     */
+    find: "x-anthropic-billing-header",
+    replace: "x-client-billing-header",
+    note: "2026-11-03 \u4E0A\u6E38\u5B9E\u6D4B\uFF1Acopilot.tencent.com \u5E26\u8BE5\u5B57\u6837 400/11128\uFF0C\u53BB\u6389/\u6539\u5199\u5747 200\uFF08\u4E0E\u8D26\u53F7\u989D\u5EA6\u65E0\u5173\uFF09"
   }
 ];
 function escapeRegExp(literal) {
@@ -73798,6 +73820,7 @@ export {
   maybeClaimBonus,
   name,
   parseWindowsProxy,
+  rewriteTencentContentFingerprints,
   serializeTraeMessagesForTest,
   withCallerSystem,
   zcodeInferenceAppVersion

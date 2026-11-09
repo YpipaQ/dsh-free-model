@@ -368,7 +368,29 @@ const CONTENT_FINGERPRINTS: readonly ContentFingerprint[] = [
       + '"the GUI", or "this app" without naming another target, they mean the GUI.',
     note: '2026-10-29 本机二分定位（上游尚未登记）：221 字符字面量、220 放行；'
       + '前两条已改写但整段仍 400 时逼出来的第三条；改 this GUI→the GUI 实测 200',
+  },  {
+    /**
+     * ★ **Claude Code SDK 的计费头字样**（上游 `84d5f078`，本 fork 2026-11-09 移植）。
+     *
+     * `copilot.tencent.com` 对该字样返回 **400/11128（内容级）**，与账号 / 额度 /
+     * 渠道配置无关；换普通客户端或**去掉该词**均 200。
+     *
+     * Claude Code SDK 入口会把计费头写进 **system 正文**：
+     * `x-anthropic-billing-header: cc_version=...; cc_entrypoint=sdk-ts;`
+     *
+     * ⚠️ 改写**刻意极窄**：只把 `x-anthropic-billing-header` 这一个**头名字面量**
+     * 换成 `x-client-billing-header`，字段与取值**逐字保留**。
+     * - 不泛化成「所有 `x-anthropic-*`」：那会连正文里真正在讨论 HTTP 头的内容也改，
+     *   且会误导后续排查（把无关字样记成本条命中）；
+     * - 不动 `cc_version=…` / `cc_entrypoint=sdk-ts`：实测**只有头名**是判据。
+     *
+     * ⚠️ **非腾讯系渠道不变**：本表只对 `TENCENT_PROVIDERS`（buddy / workbuddy）生效。
+     */
+    find: 'x-anthropic-billing-header',
+    replace: 'x-client-billing-header',
+    note: '2026-11-03 上游实测：copilot.tencent.com 带该字样 400/11128，去掉/改写均 200（与账号额度无关）',
   },
+
 ]
 
 /** 正则元字符转义：把字面量安全地变成**精确**匹配，而不是模式。 */

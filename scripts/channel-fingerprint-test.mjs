@@ -31,10 +31,23 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { registerHooks } from 'node:module'
+
+// ⚠️ 本套件以**源码级断言**为主（把 pack.js 当文本读），
+// 但指纹改写必须做**行为级**验证（「只换头名、字段逐字保留」这类没法靠文本断言）
+// ⇒ 同时用 kernel 桩真 import 产物。
+const kernel = new URL('./lib/channel-pack-kernel.mjs', import.meta.url).href
+registerHooks({
+  resolve(specifier, context, nextResolve) {
+    if (specifier.startsWith('@deepseek-ai/')) return { url: kernel, shortCircuit: true }
+    return nextResolve(specifier, context)
+  },
+})
 
 const root = path.join(fileURLToPath(new URL('..', import.meta.url)))
 const packPath = path.join(root, 'vendor', 'channel-pack', 'pack.js')
 const packSource = fs.readFileSync(packPath, 'utf8')
+const pack = await import(packPath)
 
 // 真机触发串（2026-10-21 实测能让网关回 400/11128 的原句）。
 const FINGERPRINT = 'Main branch (you will usually use this for PRs): master'
@@ -139,6 +152,31 @@ await step('⑧ DSH 的 Web GUI 环境说明句也被改写（2026-10-29 本机�
   assert.ok(replSeg, '应能截出该条的 replace 段')
   assert.match(replSeg[0], /they mean the GUI/, 'replace 段应把 this GUI 改成 the GUI')
   assert.doesNotMatch(replSeg[0], /they mean this GUI/, 'replace 段不应保留原结尾（等于没改）')
+})
+
+await step('⑨ Claude Code SDK 计费头字样也被改写（上游 84d5f078）', async () => {
+  // `copilot.tencent.com` 对 `x-anthropic-billing-header` 字样回 400/11128（内容级），
+  // 与账号/额度/渠道配置无关；去掉或改写均 200（上游 2026-11-03 实测）。
+  // Claude Code SDK 入口会把它写进 system 正文：
+  //   x-anthropic-billing-header: cc_version=...; cc_entrypoint=sdk-ts;
+  assert.match(packSource, /x-anthropic-billing-header/,
+    '规则表应含该头名字面量（否则腾讯系渠道每轮 400/11128）')
+  assert.match(packSource, /x-client-billing-header/,
+    '规则表应含其改写形态')
+  // ⚠️ 改写必须**窄**：只换头名，字段与取值逐字保留（行为级断言，不只匹配源码）
+  const rewrite = pack.rewriteTencentContentFingerprints
+  assert.equal(typeof rewrite, 'function', 'pack.js 必须导出 rewriteTencentContentFingerprints')
+  const input = 'x-anthropic-billing-header: cc_version=2.1.0; cc_entrypoint=sdk-ts;'
+  const out = rewrite(input, 'buddy')
+  assert.ok(!out.includes('x-anthropic-billing-header'), '头名必须被改写')
+  assert.match(out, /cc_version=2\.1\.0/, '字段与取值必须逐字保留（只换头名）')
+  assert.match(out, /cc_entrypoint=sdk-ts/, '其余字段不得被破坏')
+  // 非腾讯系不变
+  assert.equal(rewrite(input, 'codearts'), input,
+    '非腾讯系渠道不得改写（本表只对 buddy / workbuddy 生效）')
+  // workbuddy 同样生效
+  assert.ok(!rewrite(input, 'workbuddy').includes('x-anthropic-billing-header'),
+    'workbuddy 也必须改写（TENCENT_PROVIDERS 含两者）')
 })
 
 await step('⑤ 良性文本不被破坏', async () => {
