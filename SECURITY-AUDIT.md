@@ -11,11 +11,11 @@
 | 文件 | sha256 |
 | --- | --- |
 | `index.js` | `a932bcb6bdeef608496071a60d1f9e8499997fca52765e0eb300171d8728aa57` |
-| `client.js` | `13332f9b4102e5cc7125998983126df7b50cfa6a32ef5e20aefc51aca0a5e820` |
+| `client.js` | `ddd7680be53b06a8cdcea19b3e3ece7b4a134783d9a88a66bb08a5c554a59f69` |
 | `vendor/channel-pack/pack.js` | `2f9a8d58007fcec287c5f9be484b79adbfea8ec332bddc1ba01d52acb5877c19` |
 
 ⚠️ `pack.js` 的指纹随每次「刷新模型数据 / 移植上游修复」而变（它是构建产物）。
-上面的值对应**3.0.1（2026-11-09：目录刷新加账号闸门）之后**的版本；
+上面的值对应**3.1.0（2026-11-11：渠道卡按接入状态分组）之后**的版本；
 域名面结论未变，`scripts/egress-audit.mjs` 可随时重跑复验。
 （上一版 `9255642f…` 是上游第二轮跟进后的产物。）
 

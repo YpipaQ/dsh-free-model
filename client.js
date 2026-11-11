@@ -72,6 +72,8 @@ window.__ModuleLoader__.load({
         'chan.pack.failed': '渠道包未挂载：{reason}（免费车道与 EAC 不受影响）',
         'chan.pack.hint': '渠道包由本插件内置（vendor/channel-pack），随插件一起升级。',
         'chan.state.on': '已接入',
+        'chan.group.on': '已接入',
+        'chan.group.off': '未接入',
         'chan.state.off': '未接入',
         'chan.state.closed': '已关闭',
         'chan.meta.accounts': '账号',
@@ -254,6 +256,8 @@ window.__ModuleLoader__.load({
         'chan.pack.failed': 'Channel pack not mounted: {reason} (the free and EAC lanes are unaffected)',
         'chan.pack.hint': 'The pack ships inside this plugin (vendor/channel-pack) and upgrades with it.',
         'chan.state.on': 'Connected',
+        'chan.group.on': 'Connected',
+        'chan.group.off': 'Not connected',
         'chan.state.off': 'Not connected',
         'chan.state.closed': 'Turned off',
         'chan.meta.accounts': 'Accounts',
@@ -566,6 +570,14 @@ window.__ModuleLoader__.load({
 .ofm_glass{background:color-mix(in srgb,var(--dsw-alias-bg-layer-2) 68%,transparent);border:1px solid color-mix(in srgb,var(--dsw-alias-border-l2) 78%,transparent);box-shadow:inset 0 1px 0 rgb(255 255 255 / 6%),0 12px 34px rgb(0 0 0 / 9%)}.ofm_root .ofm_hero,.ofm_root .ofm_panel,.ofm_root .ofm_modal{background:color-mix(in srgb,var(--dsw-alias-bg-layer-2) 70%,transparent);box-shadow:inset 0 1px 0 rgb(255 255 255 / 7%),0 14px 40px rgb(0 0 0 / 10%)}
 /* ══ 渠道接入页 ════════════════════════════════════════════════════════ */
 .ofm_chanwrap{display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:14px}
+/* 渠道分组标题：已接入 / 未接入。⚠️ 必须 grid-column:1/-1 横跨整行 ——
+   否则它会变成一个 330px 的格子（把第一张卡挤到第二列）。 */
+.ofm_chargroup{grid-column:1/-1;display:flex;align-items:center;gap:9px;margin:2px 0 -4px;font-size:12px;font-weight:650;letter-spacing:.02em;color:var(--dsw-alias-text-l3)}
+.ofm_chargroup:not(:first-child){margin-top:12px}
+.ofm_chargroup::after{content:"";flex:1;height:1px;background:linear-gradient(90deg,var(--dsw-alias-border-l2),transparent)}
+.ofm_chargroupn{font-variant-numeric:tabular-nums;font-weight:600;opacity:.72}
+.ofm_chargroupdot{width:6px;height:6px;border-radius:50%;background:var(--dsw-alias-state-success-primary,#12b76a);flex:none}
+.ofm_chargroupdot.off{background:var(--dsw-alias-text-l3);opacity:.5}
 .ofm_chan{position:relative;display:flex;flex-direction:column;gap:12px;padding:16px 17px 15px;border-radius:16px;border:1px solid var(--dsw-alias-border-l2);background:color-mix(in srgb,var(--dsw-alias-bg-layer-3) 78%,transparent);box-shadow:inset 0 1px 0 rgb(255 255 255 / 5%),0 1px 2px rgb(0 0 0 / 5%);overflow:hidden;transition:transform .22s cubic-bezier(.32,.72,0,1),box-shadow .24s ease,border-color .2s ease}
 .ofm_chan::before{content:"";position:absolute;left:0;right:0;top:0;height:2px;background:linear-gradient(90deg,var(--chan-accent,var(--dsw-alias-state-business-primary)),transparent 78%);opacity:.95}
 .ofm_chan:hover{transform:translateY(-3px);box-shadow:inset 0 1px 0 rgb(255 255 255 / 8%),0 18px 40px rgb(0 0 0 / 15%);border-color:color-mix(in srgb,var(--chan-accent,var(--dsw-alias-state-business-primary)) 55%,transparent)}
@@ -1425,6 +1437,30 @@ window.__ModuleLoader__.load({
       { id: 'accio', name: 'Accio Work', org: '阿里', accent: '#FF6A00', note: '标准 OAuth + PKCE（公开客户端），可脱离 IDE 使用', login: 'browser' },
     ]
 
+    /**
+     * 把渠道按「是否已接入账号」分成两组：**已接入在前、未接入在后**，
+     * 各自保持 `PROVIDERS` 里的原始相对顺序。
+     *
+     * ## 为什么抽成纯函数（2026-11-11）
+     *
+     * 卡片顺序是被用户直接看见的行为，值得一条**顺序语义**的回归钉子；
+     * 而频道页要经 RPC 才拿到 `statuses`，渲染测试的替身里没有 connection，
+     * 永远停在「未就绪」态（那一态刻意不分组）。⇒ 抽出来让套件直接测语义，
+     * 而不是为了测顺序去伪造一整套 RPC。
+     *
+     * ⚠️ `statuses === undefined`（还没拉到数据）→ **不分组**：那时所有卡都是
+     * 骨架态，硬分会让人看到列表在一次数据到达后整体跳动。
+     * ⚠️ 「已接入」判据与卡片绿点/计数**必须同一个**（`accounts.enabled > 0`）。
+     */
+    function groupChannelsByConnected(providers, statuses, labels) {
+      if (statuses === undefined) return [{ key: 'all', label: null, dot: null, rows: providers }]
+      const isOn = row => (statuses?.[row.id]?.accounts?.enabled ?? 0) > 0
+      return [
+        { key: 'on', label: labels.on, dot: 'on', rows: providers.filter(isOn) },
+        { key: 'off', label: labels.off, dot: 'off', rows: providers.filter(row => !isOn(row)) },
+      ].filter(group => group.rows.length > 0)
+    }
+
     /** 与现有 RPC 的能力对应：余额、每日领取及独立签到状态分别判断。 */
     const CHANNEL_CREDITS = {
       codearts: { claim: true },
@@ -1920,6 +1956,26 @@ window.__ModuleLoader__.load({
 
       const connected = statuses === undefined ? 0 : CHANNEL_PROVIDERS.filter(row => (statuses[row.id]?.accounts?.enabled ?? 0) > 0).length
       const failed = !ready && pack.state === 'failed'
+      /**
+       * **渠道分组**（2026-11-11 用户要求）：「已接入账号的一组、未接入的一组；
+       * 已接入的上移、未接入的不动」。
+       *
+       * ⚠️ 顺序判据：`CHANNEL_PROVIDERS` 是**硬编码**的产品顺序（codearts → buddy →
+       * … → accio），这是有意的品牌编排，不能在数组里就地重排（否则以后维护
+       * 看不出原始顺序）。
+       * ⇒ 渲染时**派生成两组**：`filter` 保持各自在源数组里的相对顺序，
+       *   「已接入」在前、「未接入」在后 —— 正好是「上移 + 未动的保持原序」。
+       *
+       * ⚠️ 「已接入」判据与卡片上的绿点/计数**必须同一个**（`accounts.enabled > 0`）：
+       * 用别的判据（如 `accounts.total`）会出现「卡片显示未接入却排在已接入组」。
+       *
+       * ⚠️ `statuses === undefined`（还没拉到数据）时**不分组**：那时所有卡都是
+       * 骨架态，硬分会让人看到列表在一次数据到达后整体跳动。
+       */
+      const channelGroups = groupChannelsByConnected(CHANNEL_PROVIDERS, statuses, {
+        on: t('chan.group.on'),
+        off: t('chan.group.off'),
+      })
 
       return h('div', { className: 'ofm_page' },
         h('header', { className: 'ofm_hero ofm_glass' },
@@ -1941,15 +1997,22 @@ window.__ModuleLoader__.load({
         !available ? h('div', { className: 'ofm_callout' }, h('div', null, t('chan.rpc.unavailable'))) : null,
         !ready ? h('div', { className: 'ofm_chanwrap' },
           [0, 1, 2].map(index => h('div', { className: 'ofm_skel', key: index, style: { minHeight: 168 } }))) : null,
-        ready ? h('div', { className: 'ofm_chanwrap' }, CHANNEL_PROVIDERS.map(channel => h(ChannelCard, {
-          key: channel.id,
-          channel,
-          status: statuses?.[channel.id],
-          rpc: available ? rpc : null,
-          t,
-          onError,
-          onChanged,
-        }))) : null,
+        ready ? h('div', { className: 'ofm_chanwrap' },
+          channelGroups.flatMap(group => [
+            group.label === null ? null : h('div', { className: 'ofm_chargroup', key: `g-${group.key}` },
+              h('span', { className: `ofm_chargroupdot ${group.dot === 'off' ? 'off' : ''}`.trim() }),
+              h('span', null, group.label),
+              h('span', { className: 'ofm_chargroupn' }, String(group.rows.length))),
+            ...group.rows.map(channel => h(ChannelCard, {
+              key: channel.id,
+              channel,
+              status: statuses?.[channel.id],
+              rpc: available ? rpc : null,
+              t,
+              onError,
+              onChanged,
+            })),
+          ].filter(Boolean))) : null,
         error !== '' && !failed ? h('p', { className: 'ofm_note' }, `${t('chan.error').replace('{reason}', error)}`) : null)
     }
 
@@ -2525,7 +2588,7 @@ window.__ModuleLoader__.load({
     exports.inject = inject
     exports.name = 'our-free-model'
     // Headless test seams use the same stub React as scripts/client-lint.mjs.
-    exports.__test = { parseSafeHtml, safeUrl, sanitizeStyle, htmlToDom, ChannelsPage }
+    exports.__test = { parseSafeHtml, safeUrl, sanitizeStyle, htmlToDom, ChannelsPage, groupChannelsByConnected, CHANNEL_PROVIDERS }
     return module.exports
   },
 })

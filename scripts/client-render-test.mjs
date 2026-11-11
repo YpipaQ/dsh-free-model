@@ -210,6 +210,59 @@ for (const [tab, needles] of Object.entries(expected)) {
   })
 }
 
+await check('渠道卡分组：已接入在前、未接入在后，组内保持硬编码原始顺序', () => {
+  const { groupChannelsByConnected, CHANNEL_PROVIDERS } = plugin.__test ?? {}
+  assert.equal(typeof groupChannelsByConnected, 'function', '应导出 groupChannelsByConnected')
+  assert.ok(Array.isArray(CHANNEL_PROVIDERS) && CHANNEL_PROVIDERS.length > 0, '应导出 CHANNEL_PROVIDERS')
+
+  const ids = CHANNEL_PROVIDERS.map(row => row.id)
+  // 原顺序是硬编码的产品编排（codearts → buddy → … → accio），必须保持不变
+  assert.equal(ids[0], 'codearts', '原顺序第一位应是 codearts')
+  assert.equal(ids[ids.length - 1], 'accio', '原顺序最后一位应是 accio')
+
+  const labels = { on: 'ON', off: 'OFF' }
+  // 场景：前三个（codearts / buddy / workbuddy）已接入 —— 与用户截图一致
+  const statuses = {
+    codearts: { accounts: { enabled: 1 } },
+    buddy: { accounts: { enabled: 1 } },
+    workbuddy: { accounts: { enabled: 2 } },
+  }
+  const groups = groupChannelsByConnected(CHANNEL_PROVIDERS, statuses, labels)
+  assert.equal(groups.length, 2, '应分成两组（已接入 / 未接入）')
+  assert.equal(groups[0].key, 'on', '已接入组必须在前')
+  assert.equal(groups[1].key, 'off', '未接入组在后')
+  assert.deepEqual(groups[0].rows.map(r => r.id), ['codearts', 'buddy', 'workbuddy'],
+    '已接入组应是那三个，且保持原始相对顺序')
+  // ⚠️ 核心语义：未接入组 = 原顺序**去掉**已接入的那些（「未接入的不动」）
+  assert.deepEqual(groups[1].rows.map(r => r.id), ids.filter(id => !['codearts', 'buddy', 'workbuddy'].includes(id)),
+    '未接入组必须保持原顺序（未接入的不动）')
+  // 守恒：两组拼接不重不漏
+  assert.deepEqual([...groups[0].rows, ...groups[1].rows].map(r => r.id).sort(), [...ids].sort(),
+    '分组不得丢卡或重复')
+
+  // 边界 A：全都未接入 ⇒ 只有一组（不渲染空的「已接入」标题）
+  const noneOn = groupChannelsByConnected(CHANNEL_PROVIDERS, {}, labels)
+  assert.equal(noneOn.length, 1, '全都未接入时应只渲染一组')
+  assert.equal(noneOn[0].key, 'off')
+  assert.equal(noneOn[0].rows.length, CHANNEL_PROVIDERS.length)
+
+  // 边界 B：全都已接入 ⇒ 只有「已接入」一组
+  const allOn = Object.fromEntries(ids.map(id => [id, { accounts: { enabled: 1 } }]))
+  const allOnGroups = groupChannelsByConnected(CHANNEL_PROVIDERS, allOn, labels)
+  assert.equal(allOnGroups.length, 1, '全都已接入时应只渲染一组')
+  assert.equal(allOnGroups[0].key, 'on')
+
+  // 边界 C：statuses 未就绪（undefined）⇒ **不分组**（避免数据到达后列表整体跳动）
+  const notReady = groupChannelsByConnected(CHANNEL_PROVIDERS, undefined, labels)
+  assert.equal(notReady.length, 1, '数据未就绪时不应分组')
+  assert.equal(notReady[0].label, null, '未就绪的组不应有标题')
+  assert.equal(notReady[0].rows.length, CHANNEL_PROVIDERS.length)
+
+  // 边界 D：`enabled: 0` 视为未接入（与卡片绿点同一判据）
+  const zeroEnabled = groupChannelsByConnected(CHANNEL_PROVIDERS, { codearts: { accounts: { enabled: 0 } } }, labels)
+  assert.equal(zeroEnabled[0].key, 'off', 'enabled: 0 应算未接入（不能只看字段存在）')
+})
+
 await check('the pages that were removed render nowhere', () => {
   const all = Object.values(rendered).join(' ')
   for (const key of ['free.title', 'eac.title', 'agg.title', 'saver.title', 'routing.title', 'ann.preamble']) {
