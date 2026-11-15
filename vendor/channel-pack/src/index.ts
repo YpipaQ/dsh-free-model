@@ -107,6 +107,7 @@ export { findClineModelsDevEntry, stripClineSnapshotSuffix } from './cline-model
 export { httpErrorCodeForZcode } from './zcode-adapter.js'
 export { httpErrorCode as codeartsHttpErrorCode, isAuthError as codeartsIsAuthError, CODEARTS_USER_AGENT } from './llm-adapter.js'
 export { maybeClaimBonus } from './officeace-auth.js'
+export { diffChangedProviders as diffChangedProvidersForTest } from './account-pool.js'
 import { execFile } from 'node:child_process'
 
 /**
@@ -308,6 +309,33 @@ export function makeReadImageRequest(ctx: Context) {
  * `modelAdapters` 与 `ctx`，套件没法直接调；而**测夹具不算测产品**（本仓库
  * 踩过一次：真值表跑内联实现，源码改坏仍全绿）。
  */
+/** 一天的毫秒数（UTC+8 每日目录刷新用）。 */
+export const CATALOG_DAILY_MS = 24 * 60 * 60 * 1000
+
+/**
+ * 距下一个 **UTC+8 零点** 的毫秒数（含 5 秒余量）。
+ *
+ * ## 为什么对齐自然日、而不是「24 小时后的此刻」
+ *
+ * 用户心智里的「每天」是**自然日**。滑动 24h 会让一次深夜启动把之后的刷新
+ * 永久钉在深夜（每次都在同一钟点触发）；而按零点对齐，无论何时启动都会
+ * 收敛到「每天 00:00 之后不久」。
+ *
+ * ## 余量为什么是 5 秒
+ *
+ * 正好卡在 `00:00:00.000` 时，`Math.floor` 会把**当前这一刻**算进「今天」，
+ * 于是 `nextShifted` 直接跳到明天 ⇒ 漏掉一次刷新。加 5 秒让触发点稳定落在
+ * 零点**之后**。
+ *
+ * ⚠️ 抽成模块级纯函数是为了让套件能测**同一份实现**（传 `nowMs`，不吃 `Date.now`）。
+ */
+export function msUntilNextUtc8Midnight(nowMs: number): number {
+  const utc8OffsetMs = 8 * 60 * 60 * 1000
+  const shifted = nowMs + utc8OffsetMs
+  const nextShifted = Math.floor(shifted / CATALOG_DAILY_MS) * CATALOG_DAILY_MS + CATALOG_DAILY_MS
+  return Math.max(1000, nextShifted - shifted + 5000)
+}
+
 export function refreshCatalogsOnce(deps: {
   adapters: Record<string, unknown>
   hasAccount: ((provider: string) => Promise<boolean>) | undefined
@@ -1871,6 +1899,42 @@ const zcodeAdapter = registerZcodeLlm(ctx, {
     }
   }
 
+  /**
+   * **只刷某一个 provider 的目录**（供「账号变更」触发的即时刷新用）。
+   *
+   * ⚠️ 与 `refreshAllCatalogs` 共用 `refreshCatalogsOnce`（同一份实现、同一个
+   * 账号闸门与逐家容错），区别只是候选集缩到一家 —— 不另写一条必然漂移的路径。
+   * ⚠️ 该 provider 不在 `modelAdapters` 里（或没暴露 `refreshCatalog`）时静默跳过。
+   */
+  async function refreshCatalogFor(provider: string): Promise<void> {
+    // ⚠️ **TDZ 守卫**（与 `refreshAllCatalogs` 同一理由）：本函数在 2040 附近定义、
+    // `modelAdapters` 在 2385 行才赋值；而账号变更回调可能在两者之间被触发
+    // ⇒ 未就绪时静默跳过（下一次每日刷新或下一次账号变更会补上）。
+    if (typeof modelAdapters === 'undefined') return
+    const adapter = modelAdapters[provider]
+    if (adapter === undefined) return
+    await refreshCatalogsOnce({
+      adapters: { [provider]: adapter },
+      /**
+       * ⚠️⚠️ **这里刻意不传 `hasAccount`**（与每日全量刷新相反）。
+       *
+       * 账号闸门是为了挡住「没配账号的渠道被定时器白刷」；而本函数**只由账号变更
+       * 显式触发**，恰恰包括「**刚删掉最后一个账号**」这一情形 ——
+       * 那时 `hasLoggedInAccount` 返回 false，若套用闸门就会**跳过刷新**，
+       * 而删除账号正是最需要刷新的一次（目录要把那家的模型可用性收掉）。
+       *
+       * ⇒ 触发源是「明确的用户动作」时，闸门不适用（与 3.0.1 的定时器场景区分）。
+       */
+      hasAccount: undefined,
+      onError: (tag, error) => {
+        ctx.logger?.warn?.(
+          `[channel-pack] ${tag} 目录刷新失败（保留旧目录）：`
+          + `${error instanceof Error ? error.message : String(error)}`,
+        )
+      },
+    })
+  }
+
   async function refreshAllCatalogs(): Promise<void> {
     if (catalogRefreshInFlight) return
     // ⚠️ **TDZ 守卫**：本函数在 1803 行定义、`modelAdapters` 在 2204 行才赋值，
@@ -1943,14 +2007,67 @@ const zcodeAdapter = registerZcodeLlm(ctx, {
     if (accounts.length === 0) return
     void refreshAllCredentials()
     const refreshTimer = setInterval(() => {
+      // ⚠️ **目录刷新已从这里移出**（2026-11-16，用户要求「跟着自动签到走」）。
+      //
+      // 原实现让目录与续期共用 30 分钟周期，理由是「两者周期诉求相同」——
+      // **那个前提是错的**：凭据续期必须保持 30 分钟（access_token 只有 2 小时），
+      // 而模型上下架**一天不会变几次**，按 30 分钟轮询是纯浪费（还会撞上游限流）。
+      // ⇒ 续期留在这里；目录改为**每日一次 + 账号变更时立即一次**，
+      //   见下方的每日定时器与 `pool.onAccountsChanged` 接线。
       void refreshAllCredentials()
-      // ⚠️ 目录刷新**与续期同轮**：两者周期诉求相同（30 分钟），且都已自带
-      // 单飞/逐家容错；拆成两个定时器只会让「哪一轮先跑」变得不可预测。
-      void refreshAllCatalogs()
     }, REFRESH_INTERVAL_MS)
     refreshTimer.unref?.()
+
+    /**
+     * **每日目录刷新**（2026-11-16，用户要求「跟着自动签到走」）。
+     *
+     * ## 为什么是「每天一次」而不是 30 分钟
+     *
+     * 大平台一天不会上下架多次模型；而 30 分钟轮询既浪费请求，又会撞上游限流。
+     * 用户原话：「我们自己的查询上下架随自动签到的时候进行查询不就好了，
+     * 一天之内大平台不至于上下架多次模型」。
+     *
+     * ## ⚠️ 为什么不能直接「依附启动时那一轮签到」
+     *
+     * `autoCheckin.start()` 只 `setTimeout` **一次**、跑完不再排下一轮 ——
+     * 若用户连续开机几天不重启，第二天既不会签到、也不会刷目录。
+     * ⇒ 必须有一个**真正的每日定时器**。
+     *
+     * ## 对齐 UTC+8 零点（而不是「24 小时后的此刻」）
+     *
+     * 用户心智里的「每天」是自然日；滑动 24h 会让一次深夜启动把之后的刷新
+     * 永久钉在深夜。⇒ 每轮算「距下一个 UTC+8 零点的毫秒数」，到点再重排。
+     */
+    let dailyCatalogTimer: ReturnType<typeof setTimeout> | undefined
+    const scheduleDailyCatalog = (): void => {
+      dailyCatalogTimer = setTimeout(() => {
+        // 单飞 + 逐家容错都在 refreshAllCatalogs 内部；这里只需触发。
+        void refreshAllCatalogs()
+        scheduleDailyCatalog()
+      }, msUntilNextUtc8Midnight(Date.now()))
+      dailyCatalogTimer.unref?.()
+    }
+    scheduleDailyCatalog()
+
+    /**
+     * **账号变更 ⇒ 立刻刷一次目录**（用户选项 B）。
+     *
+     * ⚠️ 只刷**变动的那一家**（`pool.notifyAccountsChanged` 会传 provider）：
+     * 全量重拉会让 15 家渠道全部发请求 —— 与 3.0.1「没配账号就不该刷」同一条纪律。
+     * ⚠️ 传 `undefined`（判不出哪家）时才退化为全量。
+     */
+    pool.onAccountsChanged = (provider) => {
+      if (provider === undefined) {
+        void refreshAllCatalogs()
+        return
+      }
+      void refreshCatalogFor(provider)
+    }
+
     ctx.effect(() => () => {
       clearInterval(refreshTimer)
+      if (dailyCatalogTimer !== undefined) clearTimeout(dailyCatalogTimer)
+      pool.onAccountsChanged = undefined
       service.stop()
       buddy.stop()
       workbuddy.stop()

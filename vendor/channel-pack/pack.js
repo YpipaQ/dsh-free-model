@@ -31058,6 +31058,14 @@ function allAccountsRateLimitedForModel(accounts, modelId, now = Date.now()) {
   }
   return earliest === void 0 ? void 0 : { resetAtMs: earliest, accountCount: accounts.length };
 }
+function diffChangedProviders(before, after) {
+  const previous = new Set(before === "" ? [] : before.split(","));
+  const current = new Set(after === "" ? [] : after.split(","));
+  const changed = /* @__PURE__ */ new Set();
+  for (const key of previous) if (!current.has(key)) changed.add(key.split(":")[0]);
+  for (const key of current) if (!previous.has(key)) changed.add(key.split(":")[0]);
+  return [...changed];
+}
 var AccountPool = class {
   constructor(ctx) {
     this.ctx = ctx;
@@ -31227,14 +31235,55 @@ var AccountPool = class {
    * **必须连同黑名单一起写回**：两种后端都是整体写入，
    * 只写 `{ accounts }` 会把同一文档里的 `disabledModels` 抹掉。
    */
+  /**
+   * **账号集合变更后的通知回调**（可选；由 `index.ts` 接线到「目录立即刷新」）。
+   *
+   * ## 为什么挂在 `writeAccounts` 上
+   *
+   * `addAccount` / `updateAccount` / `removeAccount` **全部**汇流到这里 ⇒ 一个
+   * 收口点就覆盖「加账号 / 改账号 / 删账号」三类变更，不必在三个方法各埋一次
+   *（那样迟早漏一个，且删/改的语义还得各判一遍）。
+   *
+   * ⚠️ **只在集合真的变了才触发**（调用方保证）—— 本回调的用途是「让模型目录跟上
+   * 账号变化」，无变更时刷新等于白发请求。
+   * ⚠️ 回调**绝不上抛**：账号落盘是主路径，通知是锦上添花；回调抛错不该让
+   * 「添加账号」失败。
+   */
+  onAccountsChanged;
   async writeAccounts(accounts) {
+    const before = this.cache?.map((entry) => `${entry.provider}:${entry.id}`).join(",") ?? "";
     this.cache = accounts;
     this.loaded = true;
+    const after = accounts.map((entry) => `${entry.provider}:${entry.id}`).join(",");
     if (this.store.kind === "memory") {
       this.ctx.logger?.warn?.("[channel-pack] \u65E0\u6301\u4E45\u5316\u540E\u7AEF\uFF0C\u8D26\u53F7\u53D8\u66F4\u672A\u843D\u76D8");
+      this.notifyAccountsChanged(before, after);
       return;
     }
     await this.queueStoreSave();
+    this.notifyAccountsChanged(before, after);
+  }
+  /**
+   * 把「账号集合变了」通知出去（**只在真的变了、且只报变动的 provider**）。
+   *
+   * ⚠️ 只报变动 provider：全量刷新会让 15 家渠道全部重拉，而我们刚刚才因为
+   * 「不该无差别刷新」改过一次（3.0.1 的账号闸门）—— 同一条纪律。
+   */
+  notifyAccountsChanged(before, after) {
+    if (before === after) return;
+    const callback = this.onAccountsChanged;
+    if (callback === void 0) return;
+    const changed = diffChangedProviders(before, after);
+    const providers = changed.length === 0 ? [void 0] : changed;
+    for (const provider of providers) {
+      try {
+        callback(provider);
+      } catch (error) {
+        this.ctx.logger?.warn?.(
+          `[channel-pack] \u8D26\u53F7\u53D8\u66F4\u901A\u77E5\u5931\u8D25\uFF08\u4E0D\u5F71\u54CD\u8D26\u53F7\u672C\u8EAB\uFF09\uFF1A${String(error)}`
+        );
+      }
+    }
   }
   /**
    * 读取某 provider 的模型黑名单（被关闭的模型 id 集合）。
@@ -72651,6 +72700,13 @@ function makeReadImageRequest(ctx) {
     }
   };
 }
+var CATALOG_DAILY_MS = 24 * 60 * 60 * 1e3;
+function msUntilNextUtc8Midnight(nowMs) {
+  const utc8OffsetMs = 8 * 60 * 60 * 1e3;
+  const shifted = nowMs + utc8OffsetMs;
+  const nextShifted = Math.floor(shifted / CATALOG_DAILY_MS) * CATALOG_DAILY_MS + CATALOG_DAILY_MS;
+  return Math.max(1e3, nextShifted - shifted + 5e3);
+}
 function refreshCatalogsOnce(deps) {
   return (async () => {
     for (const [tag2, adapter] of Object.entries(deps.adapters)) {
@@ -73562,6 +73618,30 @@ function apply(ctx, config = {}) {
       return false;
     }
   }
+  async function refreshCatalogFor(provider) {
+    if (typeof modelAdapters === "undefined") return;
+    const adapter = modelAdapters[provider];
+    if (adapter === void 0) return;
+    await refreshCatalogsOnce({
+      adapters: { [provider]: adapter },
+      /**
+       * ⚠️⚠️ **这里刻意不传 `hasAccount`**（与每日全量刷新相反）。
+       *
+       * 账号闸门是为了挡住「没配账号的渠道被定时器白刷」；而本函数**只由账号变更
+       * 显式触发**，恰恰包括「**刚删掉最后一个账号**」这一情形 ——
+       * 那时 `hasLoggedInAccount` 返回 false，若套用闸门就会**跳过刷新**，
+       * 而删除账号正是最需要刷新的一次（目录要把那家的模型可用性收掉）。
+       *
+       * ⇒ 触发源是「明确的用户动作」时，闸门不适用（与 3.0.1 的定时器场景区分）。
+       */
+      hasAccount: void 0,
+      onError: (tag2, error) => {
+        ctx.logger?.warn?.(
+          `[channel-pack] ${tag2} \u76EE\u5F55\u5237\u65B0\u5931\u8D25\uFF08\u4FDD\u7559\u65E7\u76EE\u5F55\uFF09\uFF1A${error instanceof Error ? error.message : String(error)}`
+        );
+      }
+    });
+  }
   async function refreshAllCatalogs() {
     if (catalogRefreshInFlight) return;
     if (typeof modelAdapters === "undefined") return;
@@ -73599,11 +73679,28 @@ function apply(ctx, config = {}) {
     void refreshAllCredentials();
     const refreshTimer = setInterval(() => {
       void refreshAllCredentials();
-      void refreshAllCatalogs();
     }, REFRESH_INTERVAL_MS);
     refreshTimer.unref?.();
+    let dailyCatalogTimer;
+    const scheduleDailyCatalog = () => {
+      dailyCatalogTimer = setTimeout(() => {
+        void refreshAllCatalogs();
+        scheduleDailyCatalog();
+      }, msUntilNextUtc8Midnight(Date.now()));
+      dailyCatalogTimer.unref?.();
+    };
+    scheduleDailyCatalog();
+    pool.onAccountsChanged = (provider) => {
+      if (provider === void 0) {
+        void refreshAllCatalogs();
+        return;
+      }
+      void refreshCatalogFor(provider);
+    };
     ctx.effect(() => () => {
       clearInterval(refreshTimer);
+      if (dailyCatalogTimer !== void 0) clearTimeout(dailyCatalogTimer);
+      pool.onAccountsChanged = void 0;
       service.stop();
       buddy.stop();
       workbuddy.stop();
@@ -73854,6 +73951,7 @@ function apply(ctx, config = {}) {
   ctx.provide("accountPool", pool);
 }
 export {
+  CATALOG_DAILY_MS,
   CODEARTS_USER_AGENT,
   Config,
   ZCODE_INFERENCE_MIN_APP_VERSION,
@@ -73863,12 +73961,14 @@ export {
   httpErrorCode as codeartsHttpErrorCode,
   isAuthError as codeartsIsAuthError,
   createChannelFetch,
+  diffChangedProviders as diffChangedProvidersForTest,
   findClineModelsDevEntry,
   httpErrorCodeForZcode,
   inject,
   makeReadImage,
   makeReadImageRequest,
   maybeClaimBonus,
+  msUntilNextUtc8Midnight,
   name,
   parseWindowsProxy,
   refreshCatalogsOnce,

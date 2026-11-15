@@ -89,13 +89,36 @@ await step('③ 刷新失败必须保留旧目录（不得退回兜底子表）'
   }
 })
 
-await step('④ index.ts 的定时器真的在调 refreshAllCatalogs（只写方法=死代码）', async () => {
+await step('④ 目录刷新必须真的有触发点（每日 + 账号变更；不再挂 30 分钟）', async () => {
   const src = read('vendor/channel-pack/src/index.ts')
   assert.match(src, /async function refreshAllCatalogs\(/, '应有 refreshAllCatalogs')
-  // 定时器回调里必须调用它
+
+  // ⚠️ 2026-11-16 改版：目录刷新**从 30 分钟定时器移出**（模型上下架一天不变几次，
+  // 30 分钟轮询纯浪费且撞上游限流）。改为「每日一次 + 账号变更时立即一次」。
   const timerSeg = src.slice(src.indexOf('const refreshTimer = setInterval'))
-  assert.match(timerSeg.slice(0, 400), /refreshAllCatalogs\(\)/,
-    '定时器回调必须调用 refreshAllCatalogs（否则 30 分钟刷新永不发生）')
+  const timerBody = timerSeg.slice(0, 700)
+  assert.doesNotMatch(timerBody, /refreshAllCatalogs\(\)/,
+    '30 分钟定时器**不得**再调 refreshAllCatalogs（那只该触发续期；'
+    + '目录按 30 分钟轮询是浪费，见 2026-11-16 的改动理由）')
+  assert.match(timerBody, /refreshAllCredentials\(\)/,
+    '30 分钟定时器必须保留续期（access_token 只有 2 小时，这条不能降频）')
+
+  // 触发点一：每日定时器
+  assert.match(src, /scheduleDailyCatalog/, '应有每日目录刷新定时器')
+  assert.match(src, /msUntilNextUtc8Midnight/, '每日刷新应对齐 UTC+8 零点（不是滑动 24h）')
+  // 触发点二：账号变更
+  assert.match(src, /pool\.onAccountsChanged = /, '账号变更必须接到目录刷新')
+  assert.match(src, /refreshCatalogFor\(provider\)/, '账号变更应只刷变动的那一家')
+  // ⚠️⚠️ 账号变更路径**不得**套用账号闸门：删掉最后一个账号时
+  // `hasLoggedInAccount` 是 false，套闸门会跳过刷新 —— 而删除正是最需要刷的一次。
+  const forSeg = src.slice(src.indexOf('async function refreshCatalogFor'))
+  const forBody = forSeg.slice(0, 1600)
+  assert.match(forBody, /hasAccount: undefined/,
+    '账号变更触发的刷新**不得**带账号闸门（否则「删掉最后一个账号」时不会刷新，'
+    + '目录收不掉那家的模型）')
+  // 清理：两个定时器都要在 effect 里释放
+  assert.match(src, /clearTimeout\(dailyCatalogTimer\)/, '每日定时器必须在 effect 清理里释放')
+  assert.match(src, /pool\.onAccountsChanged = undefined/, '账号变更钩子必须随 effect 释放')
   // 单飞
   assert.match(src, /catalogRefreshInFlight/, '应有单飞标记（防上一轮没跑完就叠第二轮）')
   // 逐家容错 —— ⚠️ 按**结构**定位（函数体到下一个顶层 `async function`），
@@ -262,6 +285,65 @@ await step('⑥ 行为：无账号渠道**不会被刷新**（2026-11-09 报障�
   })
   assert.deepEqual(callsD, ['buddy'],
     '判不出账号时必须照旧刷新（单测替身常见形态，不能让替身把刷新整体挡掉）')
+})
+
+await step('⑦ 每日刷新对齐 UTC+8 零点（不是滑动 24h）', async () => {
+  const { msUntilNextUtc8Midnight, CATALOG_DAILY_MS } = await import('../vendor/channel-pack/pack.js')
+  assert.equal(typeof msUntilNextUtc8Midnight, 'function', '应导出 msUntilNextUtc8Midnight')
+  assert.equal(CATALOG_DAILY_MS, 24 * 60 * 60 * 1000, '一天应是 86400000ms')
+
+  const at = (iso) => Date.parse(iso)
+  // 00:00:01 (UTC+8) ⇒ 距下一个零点约 1 天 - 1s（+5s 余量）
+  const nearMidnight = msUntilNextUtc8Midnight(at('2026-11-16T00:00:01+08:00'))
+  assert.ok(nearMidnight > CATALOG_DAILY_MS - 10_000 && nearMidnight <= CATALOG_DAILY_MS + 10_000,
+    `零点刚过应几乎等一整天，实得 ${nearMidnight}`)
+
+  // 23:59:59 ⇒ 只剩几秒（不是 24 小时）
+  const beforeMidnight = msUntilNextUtc8Midnight(at('2026-11-16T23:59:59+08:00'))
+  assert.ok(beforeMidnight > 0 && beforeMidnight < 15_000,
+    `零点前 1 秒应只剩几秒，实得 ${beforeMidnight}（若是滑动 24h 会是 86400000）`)
+
+  // 中午 ⇒ 约 12 小时，且**必须小于**一整天（证明是对齐零点而非滑动）
+  const noon = msUntilNextUtc8Midnight(at('2026-11-16T12:00:00+08:00'))
+  assert.ok(noon > 11 * 3600_000 && noon < 13 * 3600_000,
+    `中午应约 12 小时，实得 ${noon}`)
+  assert.ok(noon < CATALOG_DAILY_MS, '中午距下次零点必须小于 24h（滑动 24h 的写法这里会等于 24h）')
+
+  // ⚠️ 边界：正好 00:00:00.000 ⇒ 必须排到**明天**（否则今晚漏刷一次）
+  const exact = msUntilNextUtc8Midnight(at('2026-11-16T00:00:00+08:00'))
+  assert.ok(exact > CATALOG_DAILY_MS - 10_000,
+    `正好零点应排到明天零点（而非「4 秒后」），实得 ${exact}`)
+
+  // UTC 时间等价性：UTC+8 的 00:00 = UTC 前一日 16:00
+  const utcSame = msUntilNextUtc8Midnight(at('2026-11-15T16:00:01Z'))
+  assert.ok(Math.abs(utcSame - nearMidnight) < 2000,
+    `UTC 表示的同一时刻应算出同样的剩余（${utcSame} vs ${nearMidnight}）`)
+})
+
+await step('⑧ 账号变更只通知**变动的那一家**（不是全量重拉）', async () => {
+  // 直接测纯逻辑：`writeAccounts` 的 before/after 差分算法。
+  // ⚠️ 走真实 AccountPool 需要完整 ctx/存储，而这里的判据是**差分语义**，
+  // 抽出来的成本远低于搭替身 —— 与 refreshCatalogsOnce 同一条思路。
+  const mod = await import('../vendor/channel-pack/pack.js')
+  const diff = mod.diffChangedProvidersForTest
+  assert.equal(typeof diff, 'function', '应导出 diffChangedProvidersForTest（差分纯函数）')
+  assert.ok(diff !== undefined)
+
+  // 加账号：只报新增的那一家
+  assert.deepEqual(diff('buddy:a1', 'buddy:a1,codearts:b1'), ['codearts'],
+    '新增 codearts 账号 ⇒ 只报 codearts（不该让 15 家全重拉）')
+  // 删账号
+  assert.deepEqual(diff('buddy:a1,codearts:b1', 'buddy:a1'), ['codearts'], '删 codearts 只报 codearts')
+  // 无变化 ⇒ 报空（不得触发刷新）
+  assert.deepEqual(diff('buddy:a1', 'buddy:a1'), [], '集合没变时不得报任何 provider')
+  // 同一 provider 内增删混合 ⇒ 仍只报一次该 provider
+  assert.deepEqual(diff('buddy:a1', 'buddy:a2'), ['buddy'], '同 provider 换账号只报一次')
+  // 两家同时变（⚠️ buddy 的号被删了，所以 buddy **也在变动之列** —— 我第一版
+  // 期望值漏了它，是断言写错而非代码错）
+  assert.deepEqual(diff('buddy:a1', 'codearts:b1,zcode:c1').sort(), ['buddy', 'codearts', 'zcode'],
+    '删除 buddy + 新增 codearts/zcode ⇒ 三家都要报（删的那家也得刷，目录要收掉）')
+  // 从空开始
+  assert.deepEqual(diff('', 'buddy:a1'), ['buddy'], '空池首次加账号应报该 provider')
 })
 
 if (failed > 0) { console.error(`\nchannel-catalog-refresh: ${failed} 项失败`); process.exit(1) }

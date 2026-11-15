@@ -92,6 +92,28 @@ export function allAccountsRateLimitedForModel(
  * `ctx.settings` 不再允许插件注册 namespace，故改用插件自有状态文档；
  * 两者都不可用时退化为内存态，保证不抛错。
  */
+/**
+ * 从「账号集合快照」的 before/after 差分出**变动过的 provider**。
+ *
+ * 快照形如 `provider:id,provider:id`（`writeAccounts` 里的构造）。
+ *
+ * ## 为什么要差分而不是「变了就全刷」
+ *
+ * 全量重拉会让 15 家渠道全部发请求。3.0.1 才刚因为「无账号渠道不该刷」改过一次，
+ * 这里是同一条纪律：**只刷真的变了的那些**。
+ *
+ * ⚠️ 抽成模块级纯函数供套件直接测（`writeAccounts` 需要完整 ctx/存储，
+ * 为一条差分语义搭整套替身不值得 —— 与 `refreshCatalogsOnce` 同一思路）。
+ */
+export function diffChangedProviders(before: string, after: string): string[] {
+  const previous = new Set(before === '' ? [] : before.split(','))
+  const current = new Set(after === '' ? [] : after.split(','))
+  const changed = new Set<string>()
+  for (const key of previous) if (!current.has(key)) changed.add(key.split(':')[0])
+  for (const key of current) if (!previous.has(key)) changed.add(key.split(':')[0])
+  return [...changed]
+}
+
 export class AccountPool {
   /** 持久化后端；两个后端都不可用时是仅内存实现。 */
   private readonly store: ChannelPackStore
@@ -270,14 +292,60 @@ export class AccountPool {
    * **必须连同黑名单一起写回**：两种后端都是整体写入，
    * 只写 `{ accounts }` 会把同一文档里的 `disabledModels` 抹掉。
    */
+  /**
+   * **账号集合变更后的通知回调**（可选；由 `index.ts` 接线到「目录立即刷新」）。
+   *
+   * ## 为什么挂在 `writeAccounts` 上
+   *
+   * `addAccount` / `updateAccount` / `removeAccount` **全部**汇流到这里 ⇒ 一个
+   * 收口点就覆盖「加账号 / 改账号 / 删账号」三类变更，不必在三个方法各埋一次
+   *（那样迟早漏一个，且删/改的语义还得各判一遍）。
+   *
+   * ⚠️ **只在集合真的变了才触发**（调用方保证）—— 本回调的用途是「让模型目录跟上
+   * 账号变化」，无变更时刷新等于白发请求。
+   * ⚠️ 回调**绝不上抛**：账号落盘是主路径，通知是锦上添花；回调抛错不该让
+   * 「添加账号」失败。
+   */
+  onAccountsChanged?: (provider?: string) => void
+
   private async writeAccounts(accounts: ProviderAccountEntry[]): Promise<void> {
+    // ⚠️ 在改写缓存**之前**记下旧集合，用于判断「是哪个 provider 变了」。
+    const before = this.cache?.map((entry) => `${entry.provider}:${entry.id}`).join(',') ?? ''
     this.cache = accounts
     this.loaded = true
+    const after = accounts.map((entry) => `${entry.provider}:${entry.id}`).join(',')
     if (this.store.kind === 'memory') {
       this.ctx.logger?.warn?.('[channel-pack] 无持久化后端，账号变更未落盘')
+      this.notifyAccountsChanged(before, after)
       return
     }
     await this.queueStoreSave()
+    this.notifyAccountsChanged(before, after)
+  }
+
+  /**
+   * 把「账号集合变了」通知出去（**只在真的变了、且只报变动的 provider**）。
+   *
+   * ⚠️ 只报变动 provider：全量刷新会让 15 家渠道全部重拉，而我们刚刚才因为
+   * 「不该无差别刷新」改过一次（3.0.1 的账号闸门）—— 同一条纪律。
+   */
+  private notifyAccountsChanged(before: string, after: string): void {
+    if (before === after) return
+    const callback = this.onAccountsChanged
+    if (callback === undefined) return
+    const changed = diffChangedProviders(before, after)
+    // 集合变了但 provider 判不出来（理论上不会）⇒ 报 undefined 让调用方全量刷
+    const providers: Array<string | undefined> = changed.length === 0 ? [undefined] : changed
+    for (const provider of providers) {
+      try {
+        callback(provider)
+      } catch (error) {
+        // ⚠️ 绝不上抛：账号落盘是主路径，通知失败不该让「添加账号」失败。
+        this.ctx.logger?.warn?.(
+          `[channel-pack] 账号变更通知失败（不影响账号本身）：${String(error)}`,
+        )
+      }
+    }
   }
 
   /**
