@@ -110,6 +110,40 @@ export const ZCODE_CLIENT_CONFIGS_URL = `${ZCODE_ORIGIN}/api/v1/client/configs`
  */
 export const ZCODE_INFERENCE_MIN_APP_VERSION = '3.17.1'
 
+/**
+ * **营销 / 领取**路径的最低客户端版本 —— 与 {@link ZCODE_INFERENCE_MIN_APP_VERSION}
+ * **是两个独立的常量**（上游 df6e9291 / WEEKEND BUILD，本 fork 2026-11-23 移植）。
+ *
+ * ## 缺陷
+ *
+ * ZCode 的营销活动只在领取预览里下发，服务端**按活动、按 `X-ZCode-App-Version`
+ * 门控**：
+ *
+ * - 版本低 ⇒ `deliveries: []` —— **与「今天没活动」完全同形、零报错**；
+ * - claim 端点同抬，版本低 ⇒ `1004 no permission`。
+ *
+ * 门槛**逐期漂移**：1024 期 `3.16.3`、1103 期 `3.17.1`、
+ * **1120 期（ZCODE WEEKEND BUILD，5 亿 token）抬到 `3.18.2`**。
+ * 报障「周末 5 亿又领不了」的根因就是常量停在上一期。
+ *
+ * 上游用 4 个真实账号只读实测（仅 `GET` 预览、零领取零 captcha）：
+ * `3.14.3…3.18.1` 全部 `deliveries` 空；**`3.18.2` 起**拿到
+ * `plan_id=zcode-v3-start-plan-wk-1120`、`grant_units=500000000`。
+ * 补丁级二分确认门槛**精确为 3.18.2**（3.18.1 空、3.18.2 即有）。
+ *
+ * ## ⚠️⚠️ 为什么必须与推理门槛分开（这是本项最容易做错的地方）
+ *
+ * 推理路径的 `X-ZCode-App-Version` 与 `system` 身份块**按代次成对校验**
+ *（跨代 ⇒ `405 + 3012`，见 {@link ZCODE_INFERENCE_MIN_APP_VERSION} 的对照表）。
+ * 若直接把推理门槛抬到 3.18.2 而身份块仍是 3.17 代 ⇒ **全量 3012**。
+ *
+ * 上游原文：「推理路径版本（`ZCODE_INFERENCE_MIN_APP_VERSION`）**未动**，不触发 3012」。
+ * ⇒ 本常量**只喂营销/领取路径**，不碰推理。
+ *
+ * ⚠️ 门槛**会继续逐期漂移** ⇒ 这是一个「需要定期跟进」的常量，不是终值。
+ */
+export const ZCODE_MARKETING_MIN_APP_VERSION = '3.18.2'
+
 /** 合法的客户端版本号形态（`major.minor.patch`，纯数字、**无前导零**）。 */
 const ZCODE_APP_VERSION_PATTERN = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/
 
@@ -150,16 +184,44 @@ export function zcodeInferenceAppVersion(
     : stored
 }
 
+/**
+ * **营销 / 领取**路径实际发出的客户端版本。
+ *
+ * 与 {@link zcodeInferenceAppVersion} **同形但基准不同**：这里用
+ * {@link ZCODE_MARKETING_MIN_APP_VERSION}（3.18.2），推理那条用 3.17.1。
+ *
+ * ⚠️ **两者刻意分开**：推理版本与 `system` 身份块成对校验，抬到 3.18.2 会触发
+ * 全量 `405 + 3012`；而营销门槛与身份块**无关**。详见营销常量的注释。
+ */
+export function zcodeMarketingAppVersion(
+  credential: Pick<ZcodeCredential, 'app_version'>,
+): string {
+  const stored = typeof credential.app_version === 'string' ? credential.app_version.trim() : ''
+  if (!ZCODE_APP_VERSION_PATTERN.test(stored)) return ZCODE_MARKETING_MIN_APP_VERSION
+  return compareZcodeAppVersion(stored, ZCODE_MARKETING_MIN_APP_VERSION) < 0
+    ? ZCODE_MARKETING_MIN_APP_VERSION
+    : stored
+}
+
 export function buildZcodeHeaders(
   credential: Pick<ZcodeCredential, 'device_mid' | 'app_version'>,
-  options: { authorization?: string; json?: boolean; captcha?: { param: string; region: string } } = {},
+  options: {
+    authorization?: string
+    json?: boolean
+    captcha?: { param: string; region: string }
+    /**
+     * **强制指定发出去的版本**（供营销/领取路径用 3.18.2，而推理路径仍用 3.17.1）。
+     * 不传时走 {@link zcodeInferenceAppVersion}（原有行为逐字节不变）。
+     */
+    appVersion?: string
+  } = {},
 ): Record<string, string> {
   /**
    * ⚠️ **推理头必须走门控**（上游 e541c582 / Issue #45）：
    * 直接取 `credential.app_version` 会发出「版本 3.17.2 + 旧身份块」这种**跨代**组合
    * ⇒ 上游恒回 405 + 3012。门控取「凭据版本 与 3.17.1 的较大者」。
    */
-  const appVersion = zcodeInferenceAppVersion(credential)
+  const appVersion = options.appVersion ?? zcodeInferenceAppVersion(credential)
   const headers: Record<string, string> = {
     'User-Agent': `ZCode/${appVersion}`,
     'HTTP-Referer': ZCODE_ORIGIN,
@@ -429,11 +491,12 @@ async function fetchClaimablePlans(
   fetchImpl: typeof fetch,
 ): Promise<ZcodeClaimablePlanSummary[]> {
   try {
-    const appVersion = credential.app_version ?? ZCODE_APP_VERSION_FALLBACK
+    // ⚠️ 领取预览同样走**营销门槛**（不是推理门槛，见 ZCODE_MARKETING_MIN_APP_VERSION）
+    const appVersion = zcodeMarketingAppVersion(credential)
     const response = await fetchWithTimeout(
       fetchImpl,
       `${ZCODE_BILLING_PREVIEW_URL}?app_version=${encodeURIComponent(appVersion)}&platform=win32`,
-      { method: 'GET', headers: buildZcodeHeaders(credential, { json: false }) },
+      { method: 'GET', headers: buildZcodeHeaders(credential, { json: false, appVersion }) },
       15_000,
     )
     if (!response.ok) return []
@@ -492,11 +555,17 @@ export async function fetchZcodeClaimablePlans(
   credential: ZcodeCredential,
   fetchImpl: typeof fetch = fetch,
 ): Promise<readonly ZcodeClaimablePlan[]> {
-  const appVersion = credential.app_version ?? ZCODE_APP_VERSION_FALLBACK
+  /**
+   * ⚠️ **领取路径用营销门槛，不是推理门槛**（见 {@link ZCODE_MARKETING_MIN_APP_VERSION}）。
+   * 取「凭据版本」与「营销门槛」的**较大者** —— 与 `zcodeInferenceAppVersion` 同形，
+   * 但基准值不同（推理 3.17.1 / 营销 3.18.2）。
+   */
+  const appVersion = zcodeMarketingAppVersion(credential)
   const url = `${ZCODE_BILLING_PREVIEW_URL}?app_version=${encodeURIComponent(appVersion)}&platform=win32`
   const response = await fetchWithTimeout(fetchImpl, url, {
     method: 'GET',
-    headers: buildZcodeHeaders(credential, { json: false }),
+    // ⚠️ 头里的版本也必须用营销门槛（否则 query 与头自相矛盾）
+    headers: buildZcodeHeaders(credential, { json: false, appVersion }),
   }, 25_000)
   if (!response.ok) return []
   let parsed: { data?: { plans?: unknown } }
@@ -567,6 +636,8 @@ export async function claimZcodePlan(
       headers: buildZcodeHeaders(credential, {
         authorization: `Bearer ${credential.zcode_jwt}`,
         captcha,
+        // ⚠️ claim 端点**按版本门控**（版本低 ⇒ 1004 no permission）⇒ 必须用营销门槛
+        appVersion: zcodeMarketingAppVersion(credential),
       }),
       body: JSON.stringify({ plan_id: planId }),
     }, 60_000)

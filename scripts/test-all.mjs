@@ -97,6 +97,8 @@ const suites = [
   ['channel-zcode-version-generation', 'channel-zcode-version-generation-test.mjs', []],
   // Cline：模型带日期/快照后缀时继承基底能力（否则图片能力/窗口丢失）。
   ['channel-cline-snapshot-suffix', 'channel-cline-snapshot-suffix-test.mjs', []],
+  // 上游 11-23：buddy 续期保活（闲置 7 天主动续）+ minimax 余额分页。
+  ['channel-keepalive-pagesize', 'channel-keepalive-pagesize-test.mjs', []],
   ['channel-network', 'channel-network-test.mjs', []],
 ].filter(([name]) => only === null || name.startsWith(only))
 

@@ -11,6 +11,7 @@ import {
   credentialExpiresAtMs,
   isExpired,
   isRefreshable,
+  jwtIssuedAtMs,
 } from './buddy.js'
 import {
   RefreshTokenExpiredError,
@@ -36,10 +37,27 @@ import {
  * `BuddyAuth` 一个类服务两个产品（buddy / workbuddy），故 tag 取
  * `this.product.id`，日志里能区分是哪个面板。
  */
-const BUDDY_EXPIRY_ACCESSORS: ExpiryAccessors<BuddyCredential> = {
+/**
+ * ⚠️ **导出供套件验证保活腿**（上游 77a0e87a）：用例要走真实访问器，
+ * 而不是另写一份等价实现（本仓库踩过「测夹具不算测产品」）。
+ */
+export const BUDDY_EXPIRY_ACCESSORS: ExpiryAccessors<BuddyCredential> = {
   expiresAtOf: credentialExpiresAtMs,
   refreshableOf: isRefreshable,
   identityOf: (credential) => credential.access_token ?? '',
+  /**
+   * **保活腿**：`access_token` 的 `iat` = 上次刷新时刻。
+   *
+   * ## 为什么必须有（issue #124）
+   *
+   * Buddy 的 access_token TTL **以天计**（上游实测 60 / 30 / 28 天且在收缩），
+   * 而 lead-time 判据只在「距过期不足 1 小时」放行 ⇒ 调度器每 30 分钟一轮
+   * **每轮都被跳过** ⇒ `refresh_token` 闲置 28 天被服务端作废（401/12153）
+   * ⇒ 用户看到「凭据过期」，**只能重新登录**。
+   *
+   * ⚠️ 读不到（非 JWT / 解析失败）返回 `undefined` ⇒ fail-open，退回旧行为。
+   */
+  issuedAtOf: (credential) => jwtIssuedAtMs(credential.access_token ?? ''),
 }
 
 /**

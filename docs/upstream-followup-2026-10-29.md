@@ -86,7 +86,7 @@ cherry-pick，必须按我们既有「位置形参 + switch」形态手工重写
 | 项 | 理由 |
 | --- | --- |
 | 客户端 UI 16 条 | 我们 `client.js` 是**手写精简版**（2531 行、无构建），上游是 React + 构建产物 ⇒ 架构不同源，逻辑不可直接搬 |
-| astudio / autoclaw / modelscope / codely / opencode | 本 fork 未移植这些渠道（剥离时按用户口径删除） |
+| astudio / autoclaw / modelscope / codely / opencode | 本 fork 未移植这些渠道（剥离时按精简范围删除） |
 | `813e7fae` analyzeImage schema | 我们**未实现** `analyzeImage` 工具（仅一处注释提到），不适用 |
 | `05802276` minimax 续期机制重构 | 我们无 `minimaxintl`；且是机制重构非缺陷修复 |
 | `dde2cc79` minimax 测试拒写 | 影响有限（无 minimaxintl），**但「NODE_ENV=test 且 home 落在 ~/.dsh 下 ⇒ 拒写+warn」这条防线值得抄** ⇒ 建议随 B2 顺手做（我们已踩过 OfficeAce 事故） |
@@ -215,7 +215,7 @@ the runtime context names. When the user refers to "this page", "this GUI", or
 
 ---
 
-## 十二、无账号条件下的取舍标准（2026-11-02，用户明示「剩下的我没号」）
+## 十二、无账号条件下的取舍标准（2026-11-02）
 
 用户只有 buddy / workbuddy / codearts / trae 四个渠道的账号。其余渠道的改动**无法真机验证**。
 故对这批改动采用更严的准入标准：

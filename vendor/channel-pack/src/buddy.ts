@@ -307,8 +307,14 @@ function absoluteExpiryMs(
   return String(baseMs + relativeSeconds * 1000)
 }
 
-/** 从 JWT payload 读取 `iat`（秒）并换算为毫秒。 */
-function jwtIssuedAtMs(token: string): number | undefined {
+/**
+ * 从 JWT payload 读取 `iat`（秒）并换算为毫秒。
+ *
+ * ⚠️ **导出供保活判据使用**（上游 77a0e87a）：refresh 会重签 access_token ⇒
+ * `iat` **天然就是「上次刷新时刻」**，不需要新字段。
+ * 读不到时返回 `undefined` ⇒ 保活腿 fail-open 退化为旧行为。
+ */
+export function jwtIssuedAtMs(token: string): number | undefined {
   if (typeof token !== 'string' || token.length === 0) return undefined
   const parts = token.split('.')
   if (parts.length < 2) return undefined

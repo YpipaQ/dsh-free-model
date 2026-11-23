@@ -440,7 +440,31 @@ export async function fetchMinimaxCreditBalance(
   fetcher: typeof fetch = fetch,
   product: MinimaxProduct = MINIMAX,
 ): Promise<CreditBalance | null> {
-  const url = `${product.apiHost}${MINIMAX_CREDIT_DETAILS_PATH}`
+  /**
+   * ⚠️⚠️ **必须带 `page_size`**（上游 a95ac6d6 / issue #141，本 fork 2026-11-23 移植）。
+   *
+   * ## 缺陷
+   *
+   * 该端点**默认只返回最近 20 个积分包**，而本函数把可见包的 `remaining_amount`
+   * 求和当余额 ⇒ **被挤出 20 条窗口的包，其额度从界面上消失**。
+   *
+   * ⚠️ **误差随天数单调扩大，不是一次性偏差**：用户每天签到新增一个包
+   * （400 / 1000 分），**最老的一个被挤出窗口** ⇒ 当被挤出包的余额接近新增包
+   * 金额时，**界面总额彻底不动** —— 这正是「明明显示签到成功、积分却不涨」的
+   * 直接原因。
+   *
+   * ## 为什么取 1000（不是 50）
+   *
+   * 上游实测 50 够用，但**长期用户会再次撞上截断**（每天一个包 ⇒ 1000 天 ≈ 2.7 年）。
+   * 取大值是一次性把窗口推远，**不动架构**。
+   *
+   * ## ⚠️ 上游如实登记的残余风险
+   *
+   * 真超过 1000 个包时本函数仍会**静默少算**。根治要循环分页，但 `page` 参数
+   * **未实测**（猜错会死循环，比现在更糟）⇒ 本轮**不猜**。
+   * `total_count` 是唯一可用的自检点（见下方注释）。
+   */
+  const url = `${product.apiHost}${MINIMAX_CREDIT_DETAILS_PATH}?page_size=1000`
   const result = await requestEnvelope(url, credential, { method: 'GET' }, fetcher)
   if (!result.ok) return null
   // ⚠️ 余额响应是**平铺**的（`details` / `total_count` 与 `base_resp` 同级，

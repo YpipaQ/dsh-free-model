@@ -329,6 +329,8 @@ var init_key = __esm({
         if (key.use !== expected)
           throw new TypeError(`Invalid key for this operation, its "use" must be "${expected}" when present`);
       }
+      if (key.kty === "AKP" && key.alg === void 0)
+        throw new TypeError('missing "alg" (Algorithm) Parameter value');
       if (key.alg !== void 0 && key.alg !== alg)
         throw new TypeError(`Invalid key for this operation, its "alg" must be "${alg}" when present`);
       if (Array.isArray(key.key_ops)) {
@@ -565,7 +567,7 @@ function secs(str) {
   const matched = REGEX.exec(str);
   (!matched || matched[4] && matched[1]) && invalidDuration();
   const value = parseFloat(matched[2]), durationSeconds = Math.round(value * multipliers[matched[3][0].toLowerCase()]);
-  return Number.isFinite(durationSeconds) || invalidDuration(), matched[1] === "-" || matched[4] === "ago" ? -durationSeconds : durationSeconds;
+  return Number.isFinite(durationSeconds) || invalidDuration(), matched[1] === "-" || matched[4]?.toLowerCase() === "ago" ? -durationSeconds : durationSeconds;
 }
 function validateInput(label, input) {
   if (!Number.isFinite(input))
@@ -34386,7 +34388,11 @@ var CodeArtsAdapter = class extends LlmAdapter {
             if (data.error_code === CODEARTS_BENEFIT_NOT_FOUND_ERROR_CODE) {
               throw new LlmError2(`codearts: ${message2}`, BENEFIT_NOT_FOUND_CODE, { status: 200 });
             }
-            throw new LlmError2(`codearts: ${message2}`, "INVALID_REQUEST", { status: 200 });
+            throw new LlmError2(
+              `codearts: ${message2}\uFF08error_code=${data.error_code}\uFF09`,
+              "INVALID_REQUEST",
+              { status: 200 }
+            );
           }
           const choice = data.choices?.[0];
           const delta = choice?.delta;
@@ -35799,7 +35805,8 @@ var BuddyAdapter = class _BuddyAdapter extends LlmAdapter2 {
       function: {
         name: tool.name,
         description: tool.description,
-        parameters: tool.parameters
+        // ⚠️ 必须洗过再发：任一工具 schema 不合规 ⇒ 整个请求 400/11129（上游 issue #138）
+        parameters: sanitizeToolSchema(tool.parameters)
       }
     }));
     const bodyObj = {
@@ -36403,6 +36410,37 @@ function commonPrefix(values) {
 }
 function positiveMaxTokens(value) {
   return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : void 0;
+}
+function sanitizeToolSchema(schema, depth = 0) {
+  if (depth > 32) return schema;
+  if (schema === null || typeof schema !== "object") return schema;
+  if (Array.isArray(schema)) return schema.map((item) => sanitizeToolSchema(item, depth + 1));
+  const out = { ...schema };
+  delete out.$schema;
+  delete out.$id;
+  if (out.type === void 0 && out.properties === void 0 && out.items === void 0 && out.anyOf === void 0 && out.oneOf === void 0 && out.allOf === void 0 && out.enum === void 0 && out.const === void 0) {
+    out.type = "object";
+  }
+  if (out.type === "object" && out.properties === void 0) out.properties = {};
+  if (out.type === "array" && out.items === void 0 && out.prefixItems === void 0) {
+    out.items = {};
+  }
+  if (typeof out.pattern === "string" && out.pattern.includes("\\0")) {
+    out.pattern = out.pattern.split("\\0").join("\\^@");
+  }
+  if (out.properties !== null && typeof out.properties === "object" && !Array.isArray(out.properties)) {
+    const props = {};
+    for (const [key, value] of Object.entries(out.properties)) {
+      props[key] = sanitizeToolSchema(value, depth + 1);
+    }
+    out.properties = props;
+  }
+  if (out.items !== void 0) out.items = sanitizeToolSchema(out.items, depth + 1);
+  for (const key of ["anyOf", "oneOf", "allOf"]) {
+    const value = out[key];
+    if (Array.isArray(value)) out[key] = value.map((item) => sanitizeToolSchema(item, depth + 1));
+  }
+  return out;
 }
 function registerBuddyLlm(ctx, options) {
   const product = options.product ?? CODEBUDDY;
@@ -44088,10 +44126,14 @@ var RefreshScheduler = class {
 
 // vendor/channel-pack/src/expiry-sync.ts
 var EXPIRY_TOLERANCE_MS = 1e3;
-function shouldRefreshNow(expiresAtMs, nowMs = Date.now(), refreshExpiresAtMs) {
+var KEEPALIVE_MAX_IDLE_MS = 7 * 24 * 60 * 60 * 1e3;
+function shouldRefreshNow(expiresAtMs, nowMs = Date.now(), refreshExpiresAtMs, issuedAtMs) {
   if (expiresAtMs === void 0 || !Number.isFinite(expiresAtMs)) return true;
   if (expiresAtMs - nowMs <= REFRESH_LEAD_MS) return true;
   if (refreshExpiresAtMs !== void 0 && Number.isFinite(refreshExpiresAtMs) && refreshExpiresAtMs - nowMs <= REFRESH_LEAD_MS) {
+    return true;
+  }
+  if (issuedAtMs !== void 0 && Number.isFinite(issuedAtMs) && nowMs - issuedAtMs >= KEEPALIVE_MAX_IDLE_MS) {
     return true;
   }
   return false;
@@ -44124,7 +44166,9 @@ async function syncAccountExpiry(params) {
 async function refreshAccountWithReconcile(params) {
   const { pool, provider, tag: tag2, accountId, credential, accessors, current, refresh, save } = params;
   const expiresAt = accessors.expiresAtOf(credential);
-  if (!shouldRefreshNow(expiresAt)) {
+  const refreshExpiresAt = accessors.refreshExpiresAtOf?.(credential);
+  const issuedAt = accessors.issuedAtOf?.(credential);
+  if (!shouldRefreshNow(expiresAt, Date.now(), refreshExpiresAt, issuedAt)) {
     await syncAccountExpiry({
       pool,
       provider,
@@ -44797,7 +44841,20 @@ import { credentialRef as credentialRef3 } from "@deepseek-ai/dsh-credentials";
 var BUDDY_EXPIRY_ACCESSORS = {
   expiresAtOf: credentialExpiresAtMs,
   refreshableOf: isRefreshable,
-  identityOf: (credential) => credential.access_token ?? ""
+  identityOf: (credential) => credential.access_token ?? "",
+  /**
+   * **保活腿**：`access_token` 的 `iat` = 上次刷新时刻。
+   *
+   * ## 为什么必须有（issue #124）
+   *
+   * Buddy 的 access_token TTL **以天计**（上游实测 60 / 30 / 28 天且在收缩），
+   * 而 lead-time 判据只在「距过期不足 1 小时」放行 ⇒ 调度器每 30 分钟一轮
+   * **每轮都被跳过** ⇒ `refresh_token` 闲置 28 天被服务端作废（401/12153）
+   * ⇒ 用户看到「凭据过期」，**只能重新登录**。
+   *
+   * ⚠️ 读不到（非 JWT / 解析失败）返回 `undefined` ⇒ fail-open，退回旧行为。
+   */
+  issuedAtOf: (credential) => jwtIssuedAtMs(credential.access_token ?? "")
 };
 var BUDDY_CREDENTIAL_REF = "BUDDY_ACCESS_TOKEN";
 function parseCredential2(value) {
@@ -52869,6 +52926,7 @@ var ZCODE_BILLING_CLAIM_URL = `${ZCODE_ORIGIN2}/api/v1/zcode-plan/billing/claim`
 var ZCODE_EVENT_REPORT_URL = `${ZCODE_ORIGIN2}/api/v1/event/report`;
 var ZCODE_CLIENT_CONFIGS_URL = `${ZCODE_ORIGIN2}/api/v1/client/configs`;
 var ZCODE_INFERENCE_MIN_APP_VERSION = "3.17.1";
+var ZCODE_MARKETING_MIN_APP_VERSION = "3.18.2";
 var ZCODE_APP_VERSION_PATTERN = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/;
 function compareZcodeAppVersion(a, b) {
   const segments = (value) => value.split(".").map((part) => {
@@ -52890,8 +52948,13 @@ function zcodeInferenceAppVersion(credential) {
   if (!ZCODE_APP_VERSION_PATTERN.test(stored)) return ZCODE_INFERENCE_MIN_APP_VERSION;
   return compareZcodeAppVersion(stored, ZCODE_INFERENCE_MIN_APP_VERSION) < 0 ? ZCODE_INFERENCE_MIN_APP_VERSION : stored;
 }
+function zcodeMarketingAppVersion(credential) {
+  const stored = typeof credential.app_version === "string" ? credential.app_version.trim() : "";
+  if (!ZCODE_APP_VERSION_PATTERN.test(stored)) return ZCODE_MARKETING_MIN_APP_VERSION;
+  return compareZcodeAppVersion(stored, ZCODE_MARKETING_MIN_APP_VERSION) < 0 ? ZCODE_MARKETING_MIN_APP_VERSION : stored;
+}
 function buildZcodeHeaders(credential, options = {}) {
-  const appVersion = zcodeInferenceAppVersion(credential);
+  const appVersion = options.appVersion ?? zcodeInferenceAppVersion(credential);
   const headers = {
     "User-Agent": `ZCode/${appVersion}`,
     "HTTP-Referer": ZCODE_ORIGIN2,
@@ -52980,11 +53043,11 @@ async function fetchZcodeBalance(credential, fetchImpl = fetch) {
 }
 async function fetchClaimablePlans(credential, fetchImpl) {
   try {
-    const appVersion = credential.app_version ?? ZCODE_APP_VERSION_FALLBACK;
+    const appVersion = zcodeMarketingAppVersion(credential);
     const response = await fetchWithTimeout(
       fetchImpl,
       `${ZCODE_BILLING_PREVIEW_URL}?app_version=${encodeURIComponent(appVersion)}&platform=win32`,
-      { method: "GET", headers: buildZcodeHeaders(credential, { json: false }) },
+      { method: "GET", headers: buildZcodeHeaders(credential, { json: false, appVersion }) },
       15e3
     );
     if (!response.ok) return [];
@@ -53025,11 +53088,12 @@ async function reportZcodeActivation(credential, fetchImpl = fetch) {
   }
 }
 async function fetchZcodeClaimablePlans(credential, fetchImpl = fetch) {
-  const appVersion = credential.app_version ?? ZCODE_APP_VERSION_FALLBACK;
+  const appVersion = zcodeMarketingAppVersion(credential);
   const url = `${ZCODE_BILLING_PREVIEW_URL}?app_version=${encodeURIComponent(appVersion)}&platform=win32`;
   const response = await fetchWithTimeout(fetchImpl, url, {
     method: "GET",
-    headers: buildZcodeHeaders(credential, { json: false })
+    // ⚠️ 头里的版本也必须用营销门槛（否则 query 与头自相矛盾）
+    headers: buildZcodeHeaders(credential, { json: false, appVersion })
   }, 25e3);
   if (!response.ok) return [];
   let parsed;
@@ -53065,7 +53129,9 @@ async function claimZcodePlan(credential, planId, captcha, fetchImpl = fetch) {
       method: "POST",
       headers: buildZcodeHeaders(credential, {
         authorization: `Bearer ${credential.zcode_jwt}`,
-        captcha
+        captcha,
+        // ⚠️ claim 端点**按版本门控**（版本低 ⇒ 1004 no permission）⇒ 必须用营销门槛
+        appVersion: zcodeMarketingAppVersion(credential)
       }),
       body: JSON.stringify({ plan_id: planId })
     }, 6e4);
@@ -56880,7 +56946,7 @@ async function claimMinimaxDailyCheckin(credential, fetcher = fetch, product = M
   };
 }
 async function fetchMinimaxCreditBalance(credential, fetcher = fetch, product = MINIMAX) {
-  const url = `${product.apiHost}${MINIMAX_CREDIT_DETAILS_PATH}`;
+  const url = `${product.apiHost}${MINIMAX_CREDIT_DETAILS_PATH}?page_size=1000`;
   const result = await requestEnvelope(url, credential, { method: "GET" }, fetcher);
   if (!result.ok) return null;
   const data = unwrapEnvelopeData(result.payload);
@@ -73954,6 +74020,7 @@ export {
   CATALOG_DAILY_MS,
   CODEARTS_USER_AGENT,
   Config,
+  KEEPALIVE_MAX_IDLE_MS,
   ZCODE_INFERENCE_MIN_APP_VERSION,
   apply,
   buildZcodeSystemBlocks,
@@ -73973,7 +74040,9 @@ export {
   parseWindowsProxy,
   refreshCatalogsOnce,
   rewriteTencentContentFingerprints,
+  sanitizeToolSchema as sanitizeToolSchemaForTest,
   serializeTraeMessagesForTest,
+  shouldRefreshNow,
   stripClineSnapshotSuffix,
   withCallerSystem,
   zcodeInferenceAppVersion

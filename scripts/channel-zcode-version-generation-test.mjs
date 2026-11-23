@@ -131,8 +131,12 @@ await step('⑤ 推理头**真的**走门控（不只是定义了函数）', asy
   const i = src.indexOf('export function buildZcodeHeaders')
   assert.ok(i > 0, '应能找到 buildZcodeHeaders')
   const body = src.slice(i, i + 2000)
-  assert.match(body, /const appVersion = zcodeInferenceAppVersion\(credential\)/,
-    'buildZcodeHeaders 必须走门控（直接取 credential.app_version 会发出跨代组合）')
+  // ⚠️ 允许 `options.appVersion ??` 显式覆盖（营销/领取路径要 3.18.2，见
+  // ZCODE_MARKETING_MIN_APP_VERSION），但**默认必须走推理门控** ——
+  // 直接取 `credential.app_version` 会发出跨代组合（⇒ 405 + 3012）。
+  assert.match(body, /const appVersion = options\.appVersion \?\? zcodeInferenceAppVersion\(credential\)/,
+    'buildZcodeHeaders 默认必须走**推理**门控（`options.appVersion ?? zcodeInferenceAppVersion(credential)`）；'
+    + '直接取 `credential.app_version` 会发出跨代组合')
   assert.match(body, /'X-ZCode-App-Version': appVersion/,
     '门控结果必须真的写进 X-ZCode-App-Version')
   assert.match(body, /`ZCode\/\$\{appVersion\}`/,

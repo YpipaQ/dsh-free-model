@@ -1565,7 +1565,8 @@ export class BuddyAdapter extends LlmAdapter {
       function: {
         name: tool.name,
         description: tool.description,
-        parameters: tool.parameters,
+        // ⚠️ 必须洗过再发：任一工具 schema 不合规 ⇒ 整个请求 400/11129（上游 issue #138）
+        parameters: sanitizeToolSchema(tool.parameters),
       },
     }))
 
@@ -2786,6 +2787,82 @@ function positiveMaxTokens(value: number | undefined): number | undefined {
  * 提供商」声明配置行）：账号、模型开关与模型目录都由 Channel Pack 设置页管理，声明只会
  * 在该页留下无人使用的行。原因、依据与恢复方式见 `llm-register-compat.ts` 模块头。
  */
+/**
+ * **把工具 schema 递归洗成腾讯系能接受的形状**（上游 4ab4351e / issue #138，
+ * 本 fork 2026-11-23 移植；`\0` 的写法按上游 9f5b0a46 的审计修正）。
+ *
+ * ## 为什么必须做（真实缺陷）
+ *
+ * 腾讯系（`copilot.tencent.com` / `www.workbuddy.ai`）对工具的 `parameters` 做
+ * **严格 JSON Schema 校验**：工具表里**任意一个**工具不合规 ⇒ **整个请求**
+ * `400 11129 invalid function call parameters`，且**响应里不带工具名**。
+ *
+ * ⚠️ 校验严格度**随模型变化**（`hy4flash-free` 不校验、`deepseek-v4.1-flash` 严格）
+ * ⇒ 用户得到「换个模型就好了」的假象，排障极绕。
+ *
+ * ## 四类实测形态（上游真机 A/B：同一凭据 / 模型 / SSE 重放）
+ *
+ * 1. 根级 `{type:'object'}` 缺 `properties`；
+ * 2. 嵌套层残缺：`{}` / 裸 `{description}`；
+ * 3. 根级 `$schema` / `$id`（function calling 的 parameters 子集不含）；
+ * 4. **`pattern` 含 `\0`**（真凶：`^[^\r\n\0]*$`）。
+ *
+ * 第 4 类的对照实验：`\0` → 400；去掉 → 200；**改成 `\^@`（caret notation）→ 200**，
+ * 且语义**完全相同** ⇒ 修法是**改写**而不是删字段。
+ *
+ * ⚠️⚠️ **不能改写成 `\x00`**（上游 9f5b0a46 的审计 P1 亲自推翻了自己第一版）：
+ * `\x00` 会**改变参数校验的语义**，而 `\^@` 与 `\0` 等价。
+ *
+ * ## 覆盖范围
+ *
+ * 剥根级 `$schema`/`$id`、裸 schema 补 `type:'object'`、`object` 缺 `properties`
+ * 补 `{}`、`array` 缺 `items` 补（**`prefixItems` 存在时不补** —— 两者互斥，
+ * 补了会造出矛盾 schema）、`pattern` 的 `\0 → \^@`、
+ * **`properties.*` / `items` / `anyOf` / `oneOf` / `allOf` 全递归**。
+ */
+export function sanitizeToolSchema(schema: unknown, depth = 0): unknown {
+  // 深度上限：坏 schema 可能是环状引用（JSON 里不可能，但 JS 对象可以）。
+  if (depth > 32) return schema
+  if (schema === null || typeof schema !== 'object') return schema
+  if (Array.isArray(schema)) return schema.map((item) => sanitizeToolSchema(item, depth + 1))
+
+  const out: Record<string, unknown> = { ...(schema as Record<string, unknown>) }
+  // ① 根级 / 任意层都剥掉 $schema、$id —— function calling 的子集不含它们。
+  delete out.$schema
+  delete out.$id
+  // ② 裸 schema（只有 description / 空对象）⇒ 补成合法的空 object。
+  if (out.type === undefined && out.properties === undefined
+    && out.items === undefined && out.anyOf === undefined
+    && out.oneOf === undefined && out.allOf === undefined
+    && out.enum === undefined && out.const === undefined) {
+    out.type = 'object'
+  }
+  // ③ object 必须有 properties（缺就补空对象）。
+  if (out.type === 'object' && out.properties === undefined) out.properties = {}
+  // ④ array 必须有 items —— ⚠️ 但 `prefixItems` 存在时**不补**（两者互斥）。
+  if (out.type === 'array' && out.items === undefined && out.prefixItems === undefined) {
+    out.items = {}
+  }
+  // ⑤ pattern 里的 `\0` 改写成 `\^@`（语义相同且被接受；绝不能写 `\x00`）。
+  if (typeof out.pattern === 'string' && out.pattern.includes('\\0')) {
+    out.pattern = out.pattern.split('\\0').join('\\^@')
+  }
+  // ⑥ 递归：properties 的每个值、items、三个组合关键字。
+  if (out.properties !== null && typeof out.properties === 'object' && !Array.isArray(out.properties)) {
+    const props: Record<string, unknown> = {}
+    for (const [key, value] of Object.entries(out.properties as Record<string, unknown>)) {
+      props[key] = sanitizeToolSchema(value, depth + 1)
+    }
+    out.properties = props
+  }
+  if (out.items !== undefined) out.items = sanitizeToolSchema(out.items, depth + 1)
+  for (const key of ['anyOf', 'oneOf', 'allOf'] as const) {
+    const value = out[key]
+    if (Array.isArray(value)) out[key] = value.map((item) => sanitizeToolSchema(item, depth + 1))
+  }
+  return out
+}
+
 export function registerBuddyLlm(ctx: Context, options: BuddyAdapterOptions): BuddyAdapter {
   const product = options.product ?? CODEBUDDY
   const adapter = new BuddyAdapter(options)

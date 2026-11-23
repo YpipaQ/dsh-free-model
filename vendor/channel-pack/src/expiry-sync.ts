@@ -92,10 +92,55 @@ export interface ExpiryAccessors<TCredential> {
    * 传 ref 名会恒匹配失败且**静默无报错**（raccoon 踩过，见其方法注释）。
    */
   identityOf: (credential: TCredential) => string
+  /**
+   * **凭据的签发时刻**（毫秒）；`undefined` 表示读不到。
+   *
+   * ## 为什么用它做「保活」判据（上游 77a0e87a / issue #124，本 fork 2026-11-23 移植）
+   *
+   * refresh 会**重签** access_token ⇒ JWT 的 `iat` **天然就是「上次刷新时刻」**，
+   * 不需要新字段。
+   *
+   * ⚠️ **不按「固定天数 N」也不按「TTL 比例」**（上游实测依据）：Buddy 的三批
+   * TTL 是 60 / 30 / 28 天且在**持续收缩**；按 `60 × 20% = 12 天` 会贴到闲置窗口
+   * 红线，而 TTL 再缩到 3 天时 `N = 7` 又不够 ⇒ 只有「**距上次刷新的时长**」
+   * 与 TTL 无关。
+   *
+   * ⚠️ **读不到 ⇒ fail-open 退回旧行为**（不是 fail-closed）：否则所有解不出
+   * JWT 的凭据会每 30 分钟被无谓刷一次。
+   */
+  issuedAtOf?: (credential: TCredential) => number | undefined
 }
 
 /** 容差：毫秒时间戳来自 JWT 的秒级 `exp`，换算后可能有 1 秒内的舍入。 */
 const EXPIRY_TOLERANCE_MS = 1000
+
+/**
+ * **保活上限：距上次刷新满 7 天就主动续一次**（上游 77a0e87a）。
+ *
+ * ## 缺陷（issue #124）
+ *
+ * CodeBuddy 的 `access_token` 有效期**以天计**（上游实测三批 60 / 30 / 28 天，
+ * 在持续收缩），而 lead-time 判据只在「距过期不足 1 小时」放行 ⇒ 调度器每 30
+ * 分钟一轮但**每轮都被跳过** ⇒ `refresh_token` 闲置 28 天被服务端**作废**：
+ *
+ * ```
+ * POST /v2/plugin/auth/token/refresh → 401 {"code":12153,"msg":"refresh token is invalid"}
+ * ```
+ *
+ * ⇒ 用户看到「凭据过期 / API 密钥无效」，**只能重新登录**。
+ *
+ * ## ⚠️ 为什么是「7 天」而不是比例
+ *
+ * 见 {@link ExpiryAccessors.issuedAtOf}：TTL 在收缩，"距上次刷新的时长"与 TTL 无关。
+ * 7 天是上游按 28 天最短 TTL 取的安全余量（留出 4 倍冗余）。
+ *
+ * ## ⚠️⚠️ 绝不能改 `REFRESH_LEAD_MS`
+ *
+ * 那是**九家共用**的：改大等于让 codearts / officeace 这类 TTL≈1 小时的渠道
+ * **每轮都续期**，把它们的一次性 `refresh_token` 全烧光（2026-10-27 两次同型事故）。
+ * ⇒ 保活是**可选腿**，只有提供 `issuedAtOf` 的渠道（buddy / workbuddy）生效。
+ */
+export const KEEPALIVE_MAX_IDLE_MS = 7 * 24 * 60 * 60 * 1000
 
 /**
  * 本轮是否需要为该凭据发一次续期请求（lead-time 语义）。
@@ -124,12 +169,33 @@ export function shouldRefreshNow(
    * ⚠️ 不传时行为**与改动前逐字节相同**（其余各家 refresh 都比 access 长，无需此腿）。
    */
   refreshExpiresAtMs?: number,
+  /**
+   * **凭据的签发时刻**（可选第四参）—— 保活腿（上游 77a0e87a / issue #124）。
+   *
+   * 语义与前三腿**不同**：前三腿问「**是不是快过期了**」，这条问
+   * 「**是不是太久没续了**」。两者都成立才需要刷的场景不同，故取「或」。
+   *
+   * ⚠️ 传 `undefined` ⇒ **跳过这条腿**（fail-open，退回旧行为）。
+   * 绝不因此判「需要刷」—— 否则所有解不出 JWT 的凭据会每 30 分钟白刷一次。
+   */
+  issuedAtMs?: number,
 ): boolean {
   if (expiresAtMs === undefined || !Number.isFinite(expiresAtMs)) return true
   if (expiresAtMs - nowMs <= REFRESH_LEAD_MS) return true
   // refresh 寿命腿（可选）：同样用 lead-time 判据，两腿取「或」
   if (refreshExpiresAtMs !== undefined && Number.isFinite(refreshExpiresAtMs)
     && refreshExpiresAtMs - nowMs <= REFRESH_LEAD_MS) {
+    return true
+  }
+  /**
+   * 保活腿（可选）：距**上次刷新**（= access_token 的 `iat`）已满
+   * {@link KEEPALIVE_MAX_IDLE_MS} ⇒ 主动续一次，避免 `refresh_token` 因长期闲置
+   * 被服务端作废（Buddy 闲置 28 天即 401/12153，只能重新登录）。
+   *
+   * ⚠️ 只判 `issuedAtMs` 存在；`NaN` / 非有限值同样跳过（fail-open）。
+   */
+  if (issuedAtMs !== undefined && Number.isFinite(issuedAtMs)
+    && nowMs - issuedAtMs >= KEEPALIVE_MAX_IDLE_MS) {
     return true
   }
   return false
@@ -248,8 +314,14 @@ export async function refreshAccountWithReconcile<TCredential>(params: {
 }): Promise<boolean> {
   const { pool, provider, tag, accountId, credential, accessors, current, refresh, save } = params
   const expiresAt = accessors.expiresAtOf(credential)
+  /**
+   * 三条腿：access 到期 / refresh 寿命 / **保活**（距上次续期满 7 天）。
+   * ⚠️ `issuedAtOf` 只有 buddy/workbuddy 提供 ⇒ 其余八家的行为**逐字节不变**。
+   */
+  const refreshExpiresAt = accessors.refreshExpiresAtOf?.(credential)
+  const issuedAt = accessors.issuedAtOf?.(credential)
 
-  if (!shouldRefreshNow(expiresAt)) {
+  if (!shouldRefreshNow(expiresAt, Date.now(), refreshExpiresAt, issuedAt)) {
     // 凭据仍在有效期内：只把池值对账，不发请求。
     await syncAccountExpiry({
       pool,

@@ -1859,7 +1859,35 @@ export class CodeArtsAdapter extends LlmAdapter {
               // 账号没有 benefit 包（积分制账户）：交给 stream() 去掉该头重试
               throw new LlmError(`codearts: ${message}`, BENEFIT_NOT_FOUND_CODE, { status: 200 })
             }
-            throw new LlmError(`codearts: ${message}`, 'INVALID_REQUEST', { status: 200 })
+            /**
+             * ⚠️⚠️ **`error_code` 必须带进文案**（上游 6defdf0c，本 fork 2026-11-23 移植）。
+             *
+             * ## 真实报障
+             *
+             * 用户在 `deepseek-v4.1-flash-1017` 上只看到：
+             * ```
+             * 处理失败 · INVALID_REQUEST
+             * codearts: The request param is invalid, Please check it
+             * ```
+             * 那是上游的 **`error_msg`** —— 而 `error_code`（**唯一能定位的那个**）
+             * 被这个分支丢掉了。上游做过对照实验（同一凭据 / 模型 / 请求体形状）：
+             * 裸请求 200、50 个工具 200、`pattern` 含 ` ` 也 200，但
+             * `maas_type: benefit` → 404 `APIG.0101`、`maas_type: education` → 403
+             * `TM.00001027` ⇒ **模型本身没问题**，问题全在「吞掉的那段信息」里。
+             *
+             * ## 与既有那条「码吞文案」是同族、反方向
+             *
+             * 本仓库记过 `AUTH` 码会连 message 一起被客户端替换掉（用户丢了唯一指路的
+             * 解释）；这次是**文案吞码**（用户丢了唯一的机器可读判据）。
+             *
+             * ⚠️ 码值放**括号里**而不是替换文案：保留上游原文（用户/搜索友好）+
+             * 带上机器可读段。`error_msg` 缺失时退化成只给码（**原有行为不变**）。
+             */
+            throw new LlmError(
+              `codearts: ${message}（error_code=${data.error_code}）`,
+              'INVALID_REQUEST',
+              { status: 200 },
+            )
           }
           const choice = data.choices?.[0]
           const delta = choice?.delta
