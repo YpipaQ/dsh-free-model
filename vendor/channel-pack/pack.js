@@ -42599,6 +42599,16 @@ var ClineAdapter = class extends LlmAdapter6 {
   }
   async ensureRemoteModels() {
     if (this.remoteComplete) return;
+    const hasAccount = this.options.accountPool?.hasLoggedInAccount;
+    if (typeof hasAccount === "function") {
+      let loggedIn = true;
+      try {
+        loggedIn = await hasAccount.call(this.options.accountPool, this.product.id);
+      } catch {
+        loggedIn = true;
+      }
+      if (!loggedIn) return;
+    }
     await this.catalogGate.run(async () => {
       try {
         const credential = await this.options.resolveCredential();

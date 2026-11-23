@@ -240,6 +240,27 @@ await step('⑤ 行为：真实挂载后刷新，listModels 看到变化 + 失�
     `刷新失败后必须保留旧目录（不得退回兜底子表）。实得: ${afterFail.join(',')}`)
 })
 
+await step('⑥b cline 的 ensureRemoteModels 入口必须有账号闸门（覆盖 3 个调用点）', async () => {
+  /**
+   * ⚠️ 只给 `listModels` 加门控**挡不住**另外两条入口：
+   * - `listAllModels()`（同步契约，缓存为空时**后台**触发）
+   * - `stream()`（判图片能力前读目录）
+   *
+   * ⇒ 闸门必须在 `ensureRemoteModels` 入口，一处覆盖三处。
+   */
+  const src = read('vendor/channel-pack/src/cline-adapter.ts')
+  const start = src.indexOf('private async ensureRemoteModels()')
+  assert.ok(start > 0, '应能找到 cline 的 ensureRemoteModels')
+  const body = src.slice(start, start + 2000)
+  assert.match(body, /hasLoggedInAccount/, 'ensureRemoteModels 入口必须查「有没有已登录账号」')
+  assert.match(body, /if \(!loggedIn\) return/, '没账号必须直接返回（不拉目录/不拉 models.dev/不打日志）')
+  // ⚠️ 三条边界
+  // 实际写法：catch 在前，catch 体内 `loggedIn = true`（保守放行）
+  assert.match(body, /catch \{\s*\n\s*loggedIn = true/, '读凭据异常应保守放行（不是挡死）')
+  assert.doesNotMatch(body.slice(0, 2000), /this\.remoteComplete = true/,
+    '没账号时**不得**置 remoteComplete —— 账号是后来才登录的，置 true 会让它永久不再拉')
+})
+
 await step('⑥ 行为：无账号渠道**不会被刷新**（2026-11-09 报障：未配 cline 却每 30 分钟刷）', async () => {
   // 用真实 AccountPool 验证 `hasLoggedInAccount` 的契约 —— 刷新器的闸门就挂在它上面。
   const poolMod = await import('../vendor/channel-pack/pack.js')

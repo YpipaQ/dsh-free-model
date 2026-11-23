@@ -374,6 +374,52 @@ export class ClineAdapter extends LlmAdapter {
   private async ensureRemoteModels(): Promise<void> {
     // ⚠️ 短路判据是「已**完整**」而非「已定义」（见 `remoteComplete`）。
     if (this.remoteComplete) return
+    /**
+     * ⚠️⚠️ **没有已登录账号 ⇒ 什么都不发**（不拉目录、不拉 models.dev、不打日志）。
+     *
+     * ## 为什么门控必须放在**这里**（而不是各调用点）
+     *
+     * `ensureRemoteModels` 有**三个**入口，只有 `listModels()` 自己有门控：
+     *
+     * | 入口 | 场景 | 原先有门控吗 |
+     * |---|---|---|
+     * | `refreshCatalog()` | 定时刷新器 | ✅ 由 `index.ts` 的 hasCatalogAccount 挡住 |
+     * | **`listAllModels()`** | 同步契约，缓存为空时**后台**触发 | ❌ **无** ← 主要噪音源 |
+     * | **`stream()`（带图）** | 判图片能力前读目录 | ❌ **无** |
+     *
+     * ⇒ 只给 `listModels` 加门控**挡不住**另外两条。放在这里一处覆盖三处。
+     *
+     * ## 症状（实测）
+     *
+     * 未配 cline 账号时，控制台反复出现：
+     *
+     * ```
+     * [cline] models.dev 目录拉取失败（缺的模型与图片能力退回本地兜底表）：
+     *   渠道网络请求失败（直连；SELF_SIGNED_CERT_IN_CHAIN）：请检查代理连通性后重试
+     * [cline] 模型目录来源失败：models 已跳过：无可用凭据（该来源的模型本次未获取）
+     * ```
+     *
+     * 第一条把「没账号」报成「网络问题」，**误导用户去查代理**；两条都没有
+     * `[channel-pack]` 前缀，看起来像别处的故障。
+     *
+     * ## ⚠️ 三条边界
+     *
+     * 1. **能力缺失 ⇒ 放行**（单测替身常只 mock 少量方法，别让替身把整条路挡死）；
+     * 2. **读凭据抛错 ⇒ 放行**（存储损坏不该变成「所有模型消失」）；
+     * 3. **不设 `remoteComplete`**：账号是**后来才登录**的，置 true 会让它永久
+     *    不再拉（那正是 3.0.1 修过的「残缺目录固化」同型）。
+     */
+    const hasAccount = (this.options.accountPool as { hasLoggedInAccount?: (p: string) => Promise<boolean> } | undefined)
+      ?.hasLoggedInAccount
+    if (typeof hasAccount === 'function') {
+      let loggedIn = true
+      try {
+        loggedIn = await hasAccount.call(this.options.accountPool, this.product.id)
+      } catch {
+        loggedIn = true   // 读凭据异常：保守放行
+      }
+      if (!loggedIn) return
+    }
     await this.catalogGate.run(async () => {
       try {
         // 目录加载路径**没有**目标模型（它要一次列出全部模型），故不传 modelId：

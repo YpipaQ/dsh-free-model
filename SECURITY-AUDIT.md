@@ -12,7 +12,7 @@
 | --- | --- |
 | `index.js` | `a932bcb6bdeef608496071a60d1f9e8499997fca52765e0eb300171d8728aa57` |
 | `client.js` | `e74f1985665c6eed9c1ceeb730e4d00777d7d57dd1a5086b3e6d9d378c1922c2` |
-| `vendor/channel-pack/pack.js` | `3ca7b5a7550f5558bc5a66a2654dca3b55454384a422705ccf862fc54191c923` |
+| `vendor/channel-pack/pack.js` | `ec29285f9b8009ecbaeb2bbd3f4fa9a88efdfd06f2522d64e9e233899c44b276` |
 
 ⚠️ `pack.js` 的指纹随每次「刷新模型数据 / 移植上游修复」而变（它是构建产物）。
 上面的值对应**3.2.0（2026-11-16：目录刷新改为每日一次 + 账号变更即时）之后**的版本；
