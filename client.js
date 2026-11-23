@@ -1435,6 +1435,7 @@ window.__ModuleLoader__.load({
       { id: 'gemini', name: 'Gemini', org: 'Google Code Assist', accent: '#4285F4', note: '本地回调 OAuth 免费线', login: 'browser' },
       { id: 'officeace', name: 'OfficeAce', org: '华为云 ModelArts MaaS', accent: '#C7000B', note: '华为云 OAuth（PKCE + DPoP），云端直连、无需装客户端', login: 'browser' },
       { id: 'accio', name: 'Accio Work', org: '阿里', accent: '#FF6A00', note: '标准 OAuth + PKCE（公开客户端），可脱离 IDE 使用', login: 'browser' },
+      { id: 'doubao', name: '豆包', org: '字节跳动 · doubao.com', accent: '#3B82F6', note: '网页端私有协议：cookie 鉴权、模型目录与对话', login: 'browser' },
     ]
 
     /**

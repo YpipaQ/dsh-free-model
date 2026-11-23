@@ -256,7 +256,7 @@ const RACCOON_FALLBACK_MODELS: readonly RaccoonFallbackModel[] = [
   },
   {
     id: 'sn-kimi-k3',
-    // ⚠️ 1 倍也要显示（用户报障「为什么 Kimi-K3 没有倍率，ide 是 1 倍，
+    // ⚠️ 1 倍也要显示（现场反馈「为什么 Kimi-K3 没有倍率，ide 是 1 倍，
     // 1 倍也要显示倍率」）—— 见 `raccoonDisplayName` 的注释。
     name: 'Kimi-K3 · x1',
     contextWindow: 1_000_000,
@@ -363,7 +363,7 @@ export function raccoonSupportsImage(modelId: string, tags: readonly string[]): 
 export const RACCOON: RaccoonProduct = {
   id: 'raccoon',
   // ⚠️ 用『Raccoon (商汤)』而非『Raccoon Work (商汤)』—— 后者在 Channel Pack 的
-  // provider Tab 里**触发换行**（用户报障）。客户端内的品牌名是 `Raccoon Work`，
+  // provider Tab 里**触发换行**（现场反馈）。客户端内的品牌名是 `Raccoon Work`，
   // 但那个词组太长；缩短成 `Raccoon` 后与其余 provider 的标签长度一致
   //（`CodeBuddy (腾讯)` / `LobsterAI (有道)` / `WorkBuddy (国际版)`）。
   displayName: 'Raccoon (商汤)',

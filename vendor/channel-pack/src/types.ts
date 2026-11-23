@@ -414,9 +414,9 @@ export interface RpcCreditsClaimSummary {
   /**
    * ★ **按单位分组**的领取合计（2026-10-04）。
    *
-   * ## 为什么必须有它（真实缺陷，用户报障）
+   * ## 为什么必须有它（真实缺陷，现场反馈）
    *
-   * 用户报障原文：
+   * 现场反馈原文：
    * > 插件的这个一键签到，Zcode 获得的是 token 数量，但是这里显示成获得积分。
    * > 正文「…ZCode（智谱）+100000000（共 +100000100）」
    * > 应当显示为「…ZCode（智谱）+100Mtoken（共 +100Mtoken, +100积分）」
@@ -679,7 +679,7 @@ export interface RpcClineRequestLogRow {
    * ⚠️ 「输出速率」必须让分子分母落在**正文阶段**：分子 =
    * `outputTokens − reasoningTokens`（思考 token 计入 `completion_tokens`，
    * 且产生于 `ttftMs` 之前），分母 = `totalMs − ttfcMs`。缺这个字段，
-   * 速率会把思考 token 除进正文窗口 → 虚高到物理不可能的值（用户报障）。
+   * 速率会把思考 token 除进正文窗口 → 虚高到物理不可能的值（现场反馈）。
    */
   ttfcMs: number
   /** 全程耗时（毫秒）。 */

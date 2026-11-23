@@ -45,7 +45,7 @@ function gateTool(name: string): OpencodeWireTool {
  * DSH 工具 → wire 工具。
  *
  * ⚠️ 这是 `options.tools` 的**唯一出口**。不下发它，模型在 wire 上看不到
- * 任何函数定义，只能用正文里的 XML 臆造工具调用 —— qoder 的用户报障
+ * 任何函数定义，只能用正文里的 XML 臆造工具调用 —— qoder 的现场反馈
  * 「执行任务出现任务调用 xml 泄露任务终止」就是这个根因。
  */
 export function buildOpencodeTools(tools: readonly OpencodeHarnessTool[] | undefined): OpencodeWireTool[] {

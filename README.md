@@ -88,7 +88,7 @@ dsh plugin --profile web add dsh-our-free-model         # 回滚到上游 2.1.0
 | `packages/standalone/`（独立 Web 产品）、`worker/`（EAC 的 Cloudflare 授权网关）、`feed/` + `catalog/`（公告源与发布清单） | 三块卫星全部 `import` 被删车道，留着就是一套永远跑不起来的代码。 |
 
 规模变化：`src/` 从 **58 个模块 → 5 个**（`store/key/chan-relay/egress/trust`），宿主 `index.js` 从
-**2343 行 → 684 行**，浏览器半身 `client.js` 从 **5992 行 → 2531 行**，离线测试从 45 个套件 → **30 个**。
+**2343 行 → 684 行**，浏览器半身 `client.js` 从 **5992 行 → 2531 行**，离线测试从 45 个套件 → **32 个**。
 界面里所有 `animation` 与 `@keyframes` 也已删除。
 
 ## 配置
@@ -142,7 +142,7 @@ POST /chan-gateway/rotate  轮换中继密钥
 ## 测试
 
 ```bash
-npm test                            # 30 个离线套件，无需网络、不花额度
+npm test                            # 32 个离线套件，无需网络、不花额度
 node scripts/host-smoke-test.mjs     # 只跑宿主 HTTP 面
 node scripts/client-lint.mjs         # 只跑浏览器半身（字典键一一对应 + CSS 规则可达）
 ```
@@ -166,6 +166,7 @@ node scripts/client-lint.mjs         # 只跑浏览器半身（字典键一一�
 | `channel-codearts-ua-codes` | CodeArts 推理 UA 覆盖（华为 WAF 按 `deepseek-harness/` 前缀拒发）+ 三业务码单列 |
 | `channel-zcode-version-generation` | ZCode 版本 × 身份块必须同代（跨代即 405+3012，全量用户不可用）|
 | `channel-cline-snapshot-suffix` | Cline 模型带日期/快照后缀时继承基底能力（否则图片能力/窗口丢失）|
+| `channel-doubao` | 豆包渠道：设备身份确定性派生（拒预验证 id）/ DSML 流式跨帧归一化 / 签到排除 |
 | `channel-officeace-checkin` | OfficeAce 签到失败留痕 + 撤销占坑（否则本小时钉死、当天 1000 分白丢）|
 | `channel-accio-rotate` | Accio 请求级账号轮换（402/429 换号+冷却、401 换号不冷却、400 不换号）|
 | `channel-trae-image-order` | TRAE 多 tool_call 时工具结果图片必须排在全部 tool 之后（否则 4027 会话永久损坏）|

@@ -67,7 +67,7 @@ export interface ClineRequestEntry {
    *
    * ⚠️ 与「模型命名空间」（`cline-pass` / `cline-free`）**不是一回事** ——
    * 后者是订阅通道，甚至可能是厂商名（`deepseek/…`）。原先展示层取的是后者，
-   * 用户报障「上游显示的不正确」；真实来源见 `src/cline-routing.ts`。
+   * 现场反馈「上游显示的不正确」；真实来源见 `src/cline-routing.ts`。
    *
    * ⚠️ **空串 = 网关本次没报路由**，展示层据此回落到模型命名空间。
    * 不要写成 `'auto'` 之类的代称：那会把「没读到」冒充成一个具体读数。
@@ -81,7 +81,7 @@ export interface ClineRequestEntry {
    * ⚠️ 与 {@link ttftMs} 是**两个不同时刻**：`ttftMs` 是「收到的第一块」
    * （可能是思考增量），`ttfcMs` 是「第一块**正文**」。
    *
-   * 为什么要分开（真实缺陷，用户报障 2026-09-30「输出速率 11814.8 t/s」）：
+   * 为什么要分开（真实缺陷，现场反馈 2026-09-30「输出速率 11814.8 t/s」）：
    * 「输出速率」必须让**分子与分母描述同一段时间**。`outputTokens`
    * **含思考 token**（本仓库已实测：`reasoning_tokens` 计入
    * `completion_tokens`），而思考是在 `ttftMs` 之前产生的 —— 拿

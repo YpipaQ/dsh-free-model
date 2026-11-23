@@ -21,7 +21,7 @@
  * 免费模型在 `name` 里拼 ` · 免费`。⚠️ **必须写进 `name` 而非 `description`**：
  * composer 的模型切换菜单只渲染 `name`（`dsh-client-ui-model-selection` 的
  * ModelSelect 里只有 `title: model.name` 与 `children: model.name`）。
- * 这是被用户报障纠正过的结论。
+ * 这是被现场反馈纠正过的结论。
  *
  * ⚠️ 免费资格是**服务端动态下发**的（`recommended-models` 的 `free` 数组），
  * 故本适配器**不硬编码任何免费模型名** —— 与 CodeArts benefit 集合同约定。
@@ -98,7 +98,7 @@ function clampClineMaxTokens(value: number | undefined): number | undefined {
 /**
  * 清洗工具参数 schema 里的 `enum`（递归）。
  *
- * ## 为什么必须清洗（实测 400，用户报障 2026-09-25）
+ * ## 为什么必须清洗（实测 400，现场反馈 2026-09-25）
  *
  * harness 下发的工具集里，某些参数的 `enum` 含**空字符串**成员。Gemini 系模型
  * （经 `google` / `vertex` provider）对此**严格校验**，直接拒绝整个请求：
@@ -170,7 +170,7 @@ export interface ClineAdapterOptions {
    *
    * ⚠️ **请求记录的「账号」列必须用池 id，不能用凭据里的 `account_id`**：
    * 面板拿 `cline.quota` 下发的**池 id** 去过滤记录，两个 id 空间不一致时
-   * 过滤恒为空 → 表格**永远空白**（真实缺陷，用户报障「请求记录中数据空白」）。
+   * 过滤恒为空 → 表格**永远空白**（真实缺陷，现场反馈「请求记录中数据空白」）。
    *
    * ⚠️ 回调**只用于首次确定起点**（与 `QoderAdapterOptions.currentAccountId` 同因）：
    * 它返回「池当前会给出的那个账号」，适配器内部换号后**不会跟着变**，
@@ -473,7 +473,7 @@ export class ClineAdapter extends LlmAdapter {
    *
    * 设置页必须渲染被关闭的模型（否则用户无法重新打开），而 `listModels` 会按
    * 黑名单过滤掉它们 —— RPC 层只能凭裸 id 补回，展示名随之丢失
-   * （用户报障：「关闭的就没有显示倍率」）。详见 `model.list` 端点的注释。
+   * （现场反馈：「关闭的就没有显示倍率」）。详见 `model.list` 端点的注释。
    *
    * ⚠️ 本方法是**同步**的（与 RPC 层 `ModelCatalogSource` 契约一致），
    * 故它只能读已缓存的目录。首次调用若缓存为空会触发一次**后台**加载，
@@ -677,7 +677,7 @@ export class ClineAdapter extends LlmAdapter {
     // 命中时直接抛出带真实原因的错误（见 isClineRegionForbidden）。
     // ⚠️ 用**账号池 id** 起步，**不是**凭据里的 `account_id`（`usr-…`）：
     // 面板用 `cline.quota` 下发的池 id 过滤请求记录，用错 id 空间会让表格
-    // **永远空白**（真实缺陷，用户报障「请求记录中数据空白」）。
+    // **永远空白**（真实缺陷，现场反馈「请求记录中数据空白」）。
     // ⚠️ 回调只用于**首次**确定起点，换号后由下面的局部变量跟进（与 Qoder 同因）。
     let currentAccountId = this.options.currentAccountId?.() ?? ''
     let response = await this.send(credential, body, options)
@@ -769,7 +769,7 @@ export class ClineAdapter extends LlmAdapter {
             ? clineRateLimitResetAt(response, errorText, options.model)
             : undefined,
         )
-        // ⚠️ 文案要短（用户报障「比其它供应商长」）：前缀只说「哪个模型、账号都用完了」，
+        // ⚠️ 文案要短（现场反馈「比其它供应商长」）：前缀只说「哪个模型、账号都用完了」，
         // 其余全部交给 `clineExhaustedAdvice` —— 原始报文不再出现在这里。
         throw new LlmError(
           `cline: 模型 ${options.model} 的所有账号均不可用 —— ${advice}`,
@@ -832,7 +832,7 @@ export class ClineAdapter extends LlmAdapter {
      * ⚠️ 与 `ttftMs` 是**两个时刻**：Cline 会流式下发思考增量
      * （`delta.reasoning`），故「第一块」常常是思考块。展示层的「输出速率」
      * 必须让分子分母落在**正文阶段**（`outputTokens − reasoningTokens`
-     * ÷ `totalMs − ttfcMs`），否则速率被无限放大 —— 用户报障的
+     * ÷ `totalMs − ttfcMs`），否则速率被无限放大 —— 现场反馈的
      * `11814.8 t/s` 正是这样来的（见 `src/cline-request-log.ts` 的 `ttfcMs`）。
      */
     let ttfcMs = 0
@@ -854,7 +854,7 @@ export class ClineAdapter extends LlmAdapter {
      *
      * ⚠️ 逐帧观测、**最后一次非空为准**（参考实现注释：路由元数据出现在
      * 「携带它的那一帧」上）。读不到时留空串，展示层回落到模型命名空间
-     * —— 「记录成模型前缀」正是用户报障的「上游显示不正确」，见
+     * —— 「记录成模型前缀」正是现场反馈的「上游显示不正确」，见
      * `src/cline-routing.ts`。
      */
     let upstream = ''
@@ -867,7 +867,7 @@ export class ClineAdapter extends LlmAdapter {
         if (ttftMs === 0) ttftMs = Date.now() - meta.startedAt
         // 正文块（文本 / 工具调用）才算「正文阶段」的起点：Cline 会先流式下发
         // 思考增量（`delta.reasoning`），把思考块当成正文会让速率的分子分母
-        // 落在不同时间段（用户报障 11814.8 t/s 的根因）。
+        // 落在不同时间段（现场反馈 11814.8 t/s 的根因）。
         if (ttfcMs === 0 && (chunk.type === 'text-delta' || chunk.type === 'tool-call-delta')) {
           ttfcMs = Date.now() - meta.startedAt
         }
@@ -1003,7 +1003,7 @@ export const CLINE_CREDIT_MARKERS: readonly string[] = [
 /**
  * 该失败是否是**与凭据无关的访问限制**（地域封锁 / 模型未开通）。
  *
- * ## 为什么必须单独识别（真实缺陷，用户报障 2026-09-25）
+ * ## 为什么必须单独识别（真实缺陷，现场反馈 2026-09-25）
  *
  * Cline 对「该地区不可用」的模型返回 **403**，而 401/403 在本适配器里原本一律
  * 被当作「凭据过期」：触发续期 → 重试 → 仍 403 → 最终 `httpErrorCode(403)`

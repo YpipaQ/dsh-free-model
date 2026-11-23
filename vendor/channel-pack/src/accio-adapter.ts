@@ -855,7 +855,7 @@ export function accioToolCallMergeTransform(): TransformStream<Uint8Array, Uint8
    * （`{content:{parts:[{function_call:{…,args_json}}]}, turn_complete:true,
    * usage_metadata:{…}, finish_reason:"STOP"}`）。吸收工具 part 时若不把
    * 这些字段暂存下来，flush 只吐工具 part ⇒ usage 恒归零、finish 恒兜底
-   * `stop` —— 正是用户报障「思考一下就中断」的根因（工具帧其实到了，
+   * `stop` —— 正是现场反馈「思考一下就中断」的根因（工具帧其实到了，
    * 但终帧元数据被合并缓冲吞掉）。
    */
   let pendingMeta: Record<string, unknown> | undefined
@@ -1270,7 +1270,7 @@ export class AccioAdapter extends LlmAdapter {
    *
    * 设置页必须能渲染已关闭的模型（否则用户无法重新打开），而 `listModels`
    * 会按黑名单过滤掉它们 ⇒ RPC 层只能凭裸 id 补回、展示名与倍率随之丢失
-   * （用户报障：「关闭的就没有显示倍率」）。
+   * （现场反馈：「关闭的就没有显示倍率」）。
    */
   listAllModels(): readonly { id: string; name: string }[] {
     return this.catalog.listAllModels()

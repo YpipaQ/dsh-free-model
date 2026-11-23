@@ -127,7 +127,7 @@ export interface QoderInferToolCall {
  * - ⚠️ **带图片的消息 `content` 是多模态数组**（`{type:'image_url',…}`）。
  *   客户端 `eQc()` / `bJc()` 就是这么把它放进 `messages[]` 的 ——
  *   图片**不走** `chat_context.imageUrls`（官方 `Hyc()` 把那个字段恒置 `null`）。
- *   早期实现把 content 压成纯文本，导致图片在下游全部消失（真实缺陷，用户报障）。
+ *   早期实现把 content 压成纯文本，导致图片在下游全部消失（真实缺陷，现场反馈）。
  * - `tool_calls` 只出现在 assistant 上。
  * - `tool_call_id` 只出现在 `role: 'tool'` 上（客户端 `A2c()` 的 `tool_result` 分支）。
  *
@@ -220,7 +220,7 @@ export interface QoderInferAsk {
    * ⚠️ **必须真的传**：加密端点认请求体**顶层** `tools`
    * （客户端源码 `tools: o?.tools ?? []`）。早期实现把它硬编码为 `[]`，
    * 模型拿不到任何函数 schema，只能用正文里的 XML 文本臆造工具调用
-   * （用户报障：「qwen3.8-flash 执行任务出现任务调用 xml 泄露任务终止」）。
+   * （现场反馈：「qwen3.8-flash 执行任务出现任务调用 xml 泄露任务终止」）。
    *
    * 省略等价于空数组（与客户端一致：键恒在，值为 `[]`）。
    */
@@ -316,7 +316,7 @@ export function buildQoderInferPayload(
     // ⚠️ **必须把调用方的工具定义真的发出去**：它是**顶层** `tools`
     // （客户端源码 `tools: o?.tools ?? []`）。早期硬编码 `[]` 让模型拿不到
     // 任何函数 schema，只能用正文里的 XML 文本臆造工具调用 ——
-    // 用户报障「qwen3.8-flash 执行任务出现任务调用 xml 泄露任务终止」。
+    // 现场反馈「qwen3.8-flash 执行任务出现任务调用 xml 泄露任务终止」。
     // 无工具时是**空数组**而非缺字段（与客户端一致）。
     tools: ask.tools ?? [],
     parameters,

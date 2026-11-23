@@ -280,7 +280,7 @@ export async function claimTraeDailyCheckin(
   if (code === 0) {
     // ⚠️ **claim 响应不含积分数**：实测（2026-09-20）它的完整响应就是
     // `{"code":0,"message":"success"}`，没有 credits 字段。早期实现读
-    // `body.credits` 因此恒为 0，界面显示「领取成功 +0 积分」（用户报障），
+    // `body.credits` 因此恒为 0，界面显示「领取成功 +0 积分」（现场反馈），
     // 而 IDE 里明明写着 150。
     //
     // 真实数值只在 **status 端点**的 `credits` 字段里（实测 `credits:150`，

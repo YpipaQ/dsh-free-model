@@ -519,7 +519,7 @@ function listenOrReject(
  *
  * TRAE 的 `redirect_uri` 是**由我们构造并随登录 URL 一起发给服务端**的，
  * 服务端会原样回跳 —— 因此端口不固定也能工作（`buildTraeLoginURL` 用实际
- * 监听到的端口重算 URL）。而固定的 18080 极易被别的程序占用（用户报障即是
+ * 监听到的端口重算 URL）。而固定的 18080 极易被别的程序占用（现场反馈即是
  * 此因），直接失败会让「新建账号」功能在那种机器上完全不可用。
  *
  * 与 CodeArts 的 `listenOnCallbackPort` 同思路：能拿到首选端口就用它

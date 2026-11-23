@@ -346,7 +346,19 @@ export function isUnsupportedCheckin(message: string): boolean {
  *   浏览器弹出来是用户自己能理解的交互。
  */
 export function isAutoCheckinExcluded(provider: string): boolean {
-  return provider === ZCODE.id
+  /**
+   * ⚠️ **豆包同样进排除表**（2026-11-23 移植 doubao 渠道时判定）。
+   *
+   * 理由与 zcode 完全同型：豆包的签到需要 `a_bogus` 签名，而上游实现是
+   * **CDP 页面会话驱动**（`doubao-signin.ts` 405 行 + 拉起浏览器）。
+   * 本 fork **不移植签到那条腿** ⇒ 若不在排除表里，自动签到会去尝试一条
+   * 根本不存在的能力，白白产生失败记录。
+   *
+   * ⚠️ 用户仍可在面板里**手动**签到（那是有意行为，浏览器弹出来是用户能理解的交互）。
+   * ⚠️ 若将来移植了 `doubao-signin.ts`，**必须同时**把这里改成按代价判定
+   * （见上方「调用即判定管不到的一类」的说明）。
+   */
+  return provider === ZCODE.id || provider === 'doubao'
 }
 
 /** 把一轮结果拼成一句中文摘要（给状态灯提示与日志用）。 */
@@ -355,7 +367,7 @@ export function describeRun(totals: RunTotals): string {
   if (totals.claimed > 0) {
     // ★ 按单位分别报（2026-10-04，真实缺陷）：原先写 `+${totals.totalCredit} 积分`，
     //   而 `totalCredit` 是**跨单位求和** —— ZCode 的 1 亿 token 与 100 积分会被
-    //   加成 `100000100` 并标成「积分」。用户报障原文给的期望形态就是
+    //   加成 `100000100` 并标成「积分」。现场反馈原文给的期望形态就是
     //   `+100Mtoken, +100积分`（见 `credits.ts` 的 `formatClaimGains`）。
     const amounts = formatClaimGains(totals.totalByUnit ?? { credit: totals.totalCredit })
     parts.push(`${totals.claimed} 个账号领取成功${amounts === null ? '' : `（${amounts}）`}`)

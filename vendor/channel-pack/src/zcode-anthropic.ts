@@ -289,7 +289,7 @@ export interface SseFrame {
  *
  * 旧实现（本函数的 `reader.read()` 裸调用）配合 `zcode-adapter.ts` 那个
  * **整轮 180s 墙钟**定时器，导致「模型一旦长时间大思考就必然超时」
- * （用户报障：雷霆大思考 → 3 分钟被截断 → 直接重试 → 又大思考 → 又被截断）。
+ * （现场反馈：雷霆大思考 → 3 分钟被截断 → 直接重试 → 又大思考 → 又被截断）。
  *
  * 官方 ZCode 的做法（`resources/glm/zcode.cjs` minify 产物还原）是
  * **空闲超时**，逐字对齐如下：
@@ -336,7 +336,7 @@ export async function* iterateSseFrames(
    * 数据（智谱免费通道首字节实测有 20 秒以上长尾，也会整段静默），
    * `await reader.read()` 就永远挂着 —— 而它**不会被 abort 唤醒**。
    *
-   * 症状（用户报障，本机三次实测）：UI 永远停在「深度求索中，用时 5分27秒…」，
+   * 症状（现场反馈，本机三次实测）：UI 永远停在「深度求索中，用时 5分27秒…」，
    * 模型既不输出推理也不输出正文，**「停止」按钮点了没反应**，只能重启宿主。
    * 会话日志里的收尾事件 `step/end` + `turn/end{kind:'interrupted'}` 与
    * `step/start` **同一毫秒** —— 那是 `dsh-session` 的 `openTurnClosers()`
@@ -660,7 +660,7 @@ export async function* consumeAnthropicSse(
      * ★ **`message_start` 与 `message_delta` 携带 usage** —— 必须收集。
      *
      * ⚠ 早期这里写着「message_start / message_delta 都不需要即时产出」，
-     * **那是错的**（用户报障：对话下方只显示「x 轮 y 步」，
+     * **那是错的**（现场反馈：对话下方只显示「x 轮 y 步」，
      * 没有 tps / token 用量 / 缓存命中 / 上下文占用）。
      *
      * DSH 的 `StreamChunk` 有 `{type:'usage'}` 与 `{type:'finish'}` 两个成员，
@@ -777,7 +777,7 @@ export async function* consumeAnthropicSse(
   /**
    * ★ 发射 usage —— **UI 的 tps / token 用量 / 缓存命中 / 上下文占用全靠它**。
    *
-   * ⚠ 早期这里什么都不发（用户报障：对话下方只有「x 轮 y 步」，
+   * ⚠ 早期这里什么都不发（现场反馈：对话下方只有「x 轮 y 步」，
    * 没有后面的指标）。`StreamChunk` 的 `usage` 成员就是给这个用的。
    *
    * ⚠ 只在**至少拿到一个数**时才发：全 `undefined` 的 usage 会让 UI

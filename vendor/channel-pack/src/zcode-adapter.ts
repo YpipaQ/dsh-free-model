@@ -148,7 +148,7 @@ function fallbackToRemote(model: ZcodeFallbackModel): ZcodeRemoteModel {
     supportsImage: model.supportsImage,
     /**
      * ⚠ **档位必须一起搬** —— 漏了它，`resolveModel()` 就拿不到
-     * `reasoningLevels`，思考档位选择器不会出现（用户报障的那个缺陷）。
+     * `reasoningLevels`，思考档位选择器不会出现（现场反馈的那个缺陷）。
      */
     ...model.reasoningLevels !== undefined ? { reasoningLevels: model.reasoningLevels } : {},
     ...model.defaultReasoningLevel !== undefined
@@ -396,7 +396,7 @@ export class ZcodeAdapter extends LlmAdapter {
    *
    * 设置页需要它渲染被关闭的模型 —— 否则那些条目只能凭 `disabledMap` 的 key
    * 补回，而那条路径拿不到展示名，会退化成裸 id
-   * （`AGENTS.md` 记过 Raccoon 的同款用户报障）。
+   * （`AGENTS.md` 记过 Raccoon 的同款现场反馈）。
    */
   listAllModels(): readonly { id: string; name: string }[] {
     const source = this.remoteModels ?? this.product.fallbackModels.map(fallbackToRemote)
@@ -520,7 +520,7 @@ export class ZcodeAdapter extends LlmAdapter {
     /**
      * ★ **思考档位必须在这里声明** —— 否则 DSH 的选择器根本不出现。
      *
-     * ⚠ **真实缺陷**（用户报障）：「使用 zcode 的 glm-5.3-flash 没法选中思考档位，
+     * ⚠ **真实缺陷**（现场反馈）：「使用 zcode 的 glm-5.3-flash 没法选中思考档位，
      * 而 ZCode 自己可以设置」。根因与本仓库 qoder 那次**完全同型**：
      * DSH 的档位选择器**只**从 `resolveModel().reasoning` 渲染
      * （`dsh-client-ui-model-selection`：`reasoning === undefined ? [] : …efforts`），
@@ -634,7 +634,7 @@ export class ZcodeAdapter extends LlmAdapter {
    * 2. **用户中断的通道在流开始之前就被摘掉**：`options.signal` 的 abort
    *    不再转发给 `controller`，`response.body` 的读取永不中止。
    *
-   * 两者叠加的后果正是用户报障（本机实测三次、含一次 1018.7 秒）：
+   * 两者叠加的后果正是现场反馈（本机实测三次、含一次 1018.7 秒）：
    * UI 停在「深度求索中，用时 5分27秒…」不动，模型既不输出思考也不输出正文，
    * **「停止」按钮点了没反应，只能重启宿主**。
    *
@@ -647,7 +647,7 @@ export class ZcodeAdapter extends LlmAdapter {
    *
    * 本方法起的是**整轮墙钟**，只兜「captcha 卡死 / 上游彻底静默」。
    * 「模型长时间大思考」**必须**由**空闲超时**（`streamIdleTimeoutMs`，
-   * 每帧续期）来判，否则会出现用户报障的死循环：
+   * 每帧续期）来判，否则会出现现场反馈的死循环：
    * 思考满 180s → abort → `TIMEOUT`（在 harness 可重试集合内）→ 重试
    * → 又大思考 → 又撞满 ⇒ 永远出不来。
    *
@@ -1582,7 +1582,7 @@ export function isFastEntitlementMiss(error: unknown, elapsedMs: number): boolea
  *
  * ## 为什么必须有这一段（真实缺陷，2026-10-01）
  *
- * **用户报障**：zcode 赠送额度用完之后，界面显示的是
+ * **现场反馈**：zcode 赠送额度用完之后，界面显示的是
  *
  * > 本轮运行失败　zcode: 模型返回了空响应（无任何 text / thinking / tool 内容）
  * > `EMPTY_RESPONSE`

@@ -514,7 +514,7 @@ export class BuddyAuth extends Service {
  * ⚠️ **必须刷新 `resolveCredential` 实际用到的那一个账号**，而不是
  * {@link BuddyAuth.refresh} 读写的默认单凭据 ref（`BUDDY_ACCESS_TOKEN` /
  * `WORKBUDDY_ACCESS_TOKEN`）。错配的后果是**整轮不可恢复的失败**
- * （真实缺陷，2026-09-26 由用户报障定位：账号池里 5 个 workbuddy 账号、
+ * （真实缺陷，2026-09-26 由现场反馈定位：账号池里 5 个 workbuddy 账号、
  * 凭据全部有效，却一直报「未配置凭据，请先登录」）：
  *
  * 1. Channel Pack 的登录入口只写 `WORKBUDDY_ACCOUNT_XXX`，**从不写**那个固定

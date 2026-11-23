@@ -208,7 +208,7 @@ export function createBlankReasoningSuppressor(): {
  * 400 拒绝整个请求。工具执行失败时（参数非法、超时、工具不存在……）harness
  * 会把 assistant 的 tool_calls 持久化进会话历史，却写不回结果消息。
  *
- * ② **名称为空 / 缺失的 tool_call**（2026-09-23 定位，用户报障）：
+ * ② **名称为空 / 缺失的 tool_call**（2026-09-23 定位，现场反馈）：
  * 会话历史里出现 `{type:'tool-call', id:'call_…', name:'', arguments:'{}'}`
  * 时，workbuddy 以 **HTTP 400 `code 11133 model_param_invalid`** 拒绝整个请求
  * （错误文案只说"请求参数不符合当前模型要求"，**不指出是哪个字段**，极难排查）。
@@ -542,7 +542,7 @@ export function toolArgsInvalidFailure(
  *
  * ## 为什么不复用 `max-tokens`（真实缺陷，Gitee !IKIZNK）
  *
- * 用户报障：循环守卫中断后，UI 显示
+ * 现场反馈：循环守卫中断后，UI 显示
  * 「**已达到输出 token 上限** / 回答被截断，已有输出保留在对话中。发送"继续"可让模型接着输出。」
  *
  * ⚠️ **这句话是错的，且误导方向**：DSH 客户端对 `max-tokens` 只有这一句**固定
@@ -650,7 +650,7 @@ export function resolveSliceChars(raw: number | undefined): number {
 /**
  * 创建思考死循环检测器。
  *
- * ## 真实缺陷（用户报障，2026-09-23）
+ * ## 真实缺陷（现场反馈，2026-09-23）
  *
  * `workbuddy/deepseek-v4.1-flash` 报「已达到输出 token 上限，回答被截断」。
  * 排查确认**不是**参数沿用上一个模型（DSH 按当前模型解析 `maxTokens`；
@@ -927,7 +927,7 @@ export interface ThinkTaggedSplit {
 /**
  * 按 **think 闭标签**把正文块拆成「思考 + 真正文」。
  *
- * ## 真实缺陷（用户报障，2026-09-25 / 2026-09-27 两次）
+ * ## 真实缺陷（现场反馈，2026-09-25 / 2026-09-27 两次）
  *
  * **第一次**：`workbuddy/hy4-preview-f` 把**思考**写进 `content`（正文）通道，
  * 只在思考段末尾留一个 `</think:6124c78e>` 闭标签。实测该会话 93 步里只有 9 步
@@ -936,7 +936,7 @@ export interface ThinkTaggedSplit {
  * → 正文出现真循环（去重率 0.0412，实测 seq 34752/34768/34823，最长 34406 字符）；
  * ② 用户看到「模型把内心独白当正文输出」。
  *
- * **第二次**（用户报障，同一函数）：qoder/qfmodel 吐**裸** `</think>`（无 hex）。
+ * **第二次**（现场反馈，同一函数）：qoder/qfmodel 吐**裸** `</think>`（无 hex）。
  * 旧判据只认 `</think:hex>` → 解析失败 → 标签原样落盘。
  *
  * ## 覆盖率（41 会话全量普查，`scripts/probe-think-forms.mjs`）
@@ -1057,7 +1057,7 @@ const ASCII_LETTER_RE = /[A-Za-z]/
 /**
  * 清洗**行首**的 `course` / `课` 泄漏 token。
  *
- * ## 真实缺陷（用户报障，2026-09-23）
+ * ## 真实缺陷（现场反馈，2026-09-23）
  *
  * 用户观察：`deepseek-v4.1-flash` 的输出与思考中，**经常一行开头带一个中文「课」
  * 或英文「course」**，会污染提示词。
@@ -1106,7 +1106,7 @@ const ASCII_LETTER_RE = /[A-Za-z]/
  * 该实测**是错的**：在 lilishop-go 的 `session-d0ec32df` 里实测出 75 处行首
  * `course`，后接字符为 `注`(14) `关`(14) `这`(7) `核`(5) `，`(4) `先`(3) …，
  * **75/75 全部后接中文、无一处后接空白**，故初版判据命中率 **0%**（全部漏放）。
- * 用户报障「偶尔还是有泄露」即此 —— 且构建之后仍在复现（实测 10 处），
+ * 现场反馈「偶尔还是有泄露」即此 —— 且构建之后仍在复现（实测 10 处），
  * 不是旧产物问题。
  *
  * 根因：`course` 泄漏在中文语境里**后面直接接中文**（无空格），而初版按
@@ -1212,7 +1212,7 @@ export function stripCourseLeakIfEnabled(text: string): string {
  *
  * `block-end` 清洗只管**本次新生成**的文本。但泄漏早在本次修复之前就已
  * **持久化进会话历史**（实测全库 2771 行），此后每轮请求都会把这段脏历史
- * 原样重放给模型 —— 正是用户报障的「污染提示词」。
+ * 原样重放给模型 —— 正是现场反馈的「污染提示词」。
  *
  * 故必须在**发给模型之前**再清一道，让**存量坏会话自愈**、无需用户重开会话。
  * 这与「名称为空的 tool_call」那次的思路一致（消费侧修源头 + 序列化侧治存量）。
@@ -1336,7 +1336,7 @@ export function stripBareThinkCloseTag(text: string): string {
 /**
  * 判定正文是否被**上游停止串**截断 —— 即「正文引用 `</think>` 导致对话中断」。
  *
- * ## 真实缺陷（用户报障，2026-09-27，本会话实时复现）
+ * ## 真实缺陷（现场反馈，2026-09-27，本会话实时复现）
  *
  * 上游（Qwen 系，实测 `qoder/qfmodel`）把 **`</think>` 当停止串**。当模型在
  * **正文里引用**这个标签（例如讨论它、写 `` `</think>` ``）时，服务端在
@@ -1383,4 +1383,90 @@ export function isProseTruncatedByStopString(text: string): boolean {
   if (ticks % 2 === 0) return false
   // ② 必须以未闭合的开引号收尾（或半个标签，服务端可能已吐出一部分）
   return /`$/.test(tail) || /<$/.test(tail) || /<\/think$/.test(tail)
+}
+
+/**
+ * **DSML 标记的行内归一化**（整段入口）。
+ *
+ * ## 修什么
+ *
+ * 服务端出于笔误或分帧会吐出**双竖线**形态：
+ *
+ * ```
+ * <｜｜DSML｜｜tool_calls>    ← 前缀双竖线
+ * <｜DSML｜｜invoke …>        ← 后缀双竖线
+ * ```
+ *
+ * 而 `parseDsmlToolCalls` 唯一认的写法是单竖线 ⇒ 不修就**整块解析失败**，
+ * 调用方拿到的工具调用是空数组（不是 undefined），于是「模型看起来回答了、
+ * 但工具从没被调用」。
+ *
+ * ## 与 `dsml.ts` 的 `normalizeDsmlText` 的关系
+ *
+ * ⚠️ **两份实现是不得已的分叉**（本文件服务 8 个适配器的**逐帧**路径，
+ * 而 `dsml.ts` 那份服务 `feed()` 的**累积完整片段**）。判据必须**逐字同源**：
+ * 改任一条正则时要同步另一条，否则「教得会、解不开」会以另一种形态复发。
+ */
+export function fixDsmlMarkers(text: string): string {
+  // ⚠️ 前视里的 `[tcip]` 是**协议标签名首字母**（`t`ool_calls / `c`alls /
+  //    `i`nvoke / `p`arameter / `t`hought）。少了它，右侧双竖线后紧跟字母的
+  //    实测形态（`<｜DSML｜｜invoke …>`）一条都修不了。
+  const AFTER = '(?=｜|\\s|>|\\/|$|[tcip])'
+  return text
+    .replace(new RegExp(`(<\\/?)｜{2,}DSML${AFTER}`, 'g'), '$1｜DSML')
+    .replace(new RegExp(`DSML｜{2,}${AFTER}`, 'g'), 'DSML｜')
+    .replace(/(<\/?)｜DSML｜\s*(?:tool_)?calls>/g, '$1｜DSML｜tool_calls>')
+}
+
+/**
+ * **流式**的 DSML 标记归一化器（豆包等逐帧路径用）。
+ *
+ * ## 为什么不能直接用 `fixDsmlMarkers` 逐帧处理
+ *
+ * 模式会**跨帧**（一帧是 `<｜`、下一帧才是 `｜DSML｜invoke…`），逐帧 `replace`
+ * 每帧都只见半截模式 ⇒ **漏判**。这与本文件上方 `splitThinkTaggedContent`
+ * 记录过的实测是同一类坑（二分帧 7/11 种切法漏判）。
+ *
+ * ⇒ 这里持有**待定缓冲**：凡是可能构成模式前缀的尾部都扣住不发，等下一帧拼齐再判。
+ *
+ * ⚠️ 代价：文本恰好以 `<`、`<｜`、`DSML｜` 等结尾时，最后几个字符会延迟到下一帧
+ *（或 `flush()`）—— 对流式 UI 只是几字符的延迟，**无正确性影响**。
+ */
+export function createDsmlMarkerNormalizer(): {
+  push: (text: string) => string
+  flush: () => string
+} {
+  /** 待定缓冲（可能构成模式前缀的尾部）。 */
+  let pending = ''
+  /** 这些模式的**真前缀**都可能还差后续输入才算得清，必须扣住。 */
+  const PREFIX_PATTERNS = ['<｜｜DSML', '</｜｜DSML', 'DSML｜｜']
+  /** 最长模式长度（决定扣住窗口上限）。 */
+  const MAX_PENDING = 9
+  /** 计算应扣住的尾部长度（最长匹配优先）。 */
+  function holdBackLen(s: string): number {
+    const max = Math.min(s.length, MAX_PENDING)
+    for (let len = max; len >= 1; len--) {
+      const tail = s.slice(-len)
+      if (PREFIX_PATTERNS.some((p) => p.startsWith(tail))) return len
+    }
+    return 0
+  }
+
+  return {
+    /** 喂入一帧文本，返回可安全下发的部分（可能为空串）。 */
+    push(text: string): string {
+      pending += text
+      const fixed = fixDsmlMarkers(pending)
+      const hold = holdBackLen(fixed)
+      const out = hold > 0 ? fixed.slice(0, fixed.length - hold) : fixed
+      pending = hold > 0 ? fixed.slice(fixed.length - hold) : ''
+      return out
+    },
+    /** 流结束：下发全部剩余（再做一次完整归一化兜底）。 */
+    flush(): string {
+      const out = fixDsmlMarkers(pending)
+      pending = ''
+      return out
+    },
+  }
 }

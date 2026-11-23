@@ -321,7 +321,7 @@ function linuxBrowserCandidates(home: string): string[] {
  *
  * 候选链按平台分叉后，**macOS / Linux 分支在本仓库的 Windows CI 上一次都执行不到** ——
  * 直接写在 `findBrowserExecutable()` 里，这些路径会永远「静默通过」，
- * 直到用户报障（IKJKNT 就是 macOS 的 macOS 那条的先例）。
+ * 直到现场反馈（IKJKNT 就是 macOS 的 macOS 那条的先例）。
  * 抽出来后它们是纯字符串计算，可在任何平台断言。
  *
  * 三个入参都可注入，正是为了这个：`platform` 定分支、`env` 造 scoop /
@@ -759,7 +759,7 @@ export interface ZcodeCaptchaBrowserOptions {
    * 耗时 **2.6–3.5 秒**。
    *
    * ⇒ 结论：**「空闲必然失效」不成立**；那个阈值让每次空闲后都白付一次
-   * 建页成本（约 2.7 秒）。这正是用户报障「一键签到里 ZCode 很久」的成因
+   * 建页成本（约 2.7 秒）。这正是现场反馈「一键签到里 ZCode 很久」的成因
    * —— 而不是 captcha 本身慢（**失败时**的自愈能力仍然保留：`mint()` 里
    * `attempt > 1` 会 `forceFresh` 换页重试）。
    *
@@ -851,7 +851,7 @@ function isPortFree(port: number): Promise<boolean> {
 /**
  * ★ 把 chromium 的窗口从**任务栏**移除（Windows）。
  *
- * ## 为什么需要（用户报障 2026-09-29）
+ * ## 为什么需要（现场反馈 2026-09-29）
  *
  * > captcha 打开的 chromium 虽然最小化在任务栏，但**每次刷新页面完成都会闪烁
  * > 提示**。任务栏设成自动隐藏时，它会不停**浮上来**显示那个闪烁提示，
@@ -1613,7 +1613,7 @@ export class ZcodeCaptchaBrowser {
    * ```
    *
    * ⚠ 原来的「预测式换页」让**每次空闲后都白付约 2.7 秒**建页成本 ——
-   * 这正是用户报障「一键签到里 ZCode 很久」的成因（而不是 captcha 慢）。
+   * 这正是现场反馈「一键签到里 ZCode 很久」的成因（而不是 captcha 慢）。
    * 改成失败兜底后：**常态省约 2.7 秒、不增加 captcha 调用次数**，
    * 真遇到 `F001` 时的自愈能力与原来一致（甚至更快：
    * 原来"先换页"是必然付费，现在只在真失败时才付）。
@@ -1751,7 +1751,7 @@ export class ZcodeCaptchaBrowser {
      *
      * ⇒ **`F001` 与"空闲时长"无关**，真正的变量是「DOM 被重置而 SDK 未重建」。
      * 这纠正了 2026-09-29 的误判 —— 当时据此加了「空闲 8 秒就换页」的
-     * 预测式重建，让**每次空闲后白付约 2.7 秒**（用户报障「签到很久」的成因）。
+     * 预测式重建，让**每次空闲后白付约 2.7 秒**（现场反馈「签到很久」的成因）。
      *
      * ## 修法
      *
@@ -1863,7 +1863,7 @@ export class ZcodeCaptchaBrowser {
      * 见 `ZcodeCaptchaBrowserOptions.idleReuseMs` 的完整说明：
      * 原默认 8 秒基于「空闲 15 秒必然 F001」这条推论，而它在 2026-10-01 的
      * 严格复测中**无法复现** —— 空闲 20 秒后直接复用仍 3/3 成功（约 0.47 秒），
-     * 而每次换页要付约 2.7 秒。用户报障的「签到很久」正源于此。
+     * 而每次换页要付约 2.7 秒。现场反馈的「签到很久」正源于此。
      *
      * 失败时 `mint()` 的 `attempt > 1` 会传 `forceFresh = true` 换页重试，
      * 故**自愈能力不变**。

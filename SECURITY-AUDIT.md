@@ -11,8 +11,8 @@
 | 文件 | sha256 |
 | --- | --- |
 | `index.js` | `a932bcb6bdeef608496071a60d1f9e8499997fca52765e0eb300171d8728aa57` |
-| `client.js` | `ddd7680be53b06a8cdcea19b3e3ece7b4a134783d9a88a66bb08a5c554a59f69` |
-| `vendor/channel-pack/pack.js` | `b5ffd11cbd36aabb756b50766728023ad221845164c641b4eb74f32998b1bbf2` |
+| `client.js` | `e74f1985665c6eed9c1ceeb730e4d00777d7d57dd1a5086b3e6d9d378c1922c2` |
+| `vendor/channel-pack/pack.js` | `3ca7b5a7550f5558bc5a66a2654dca3b55454384a422705ccf862fc54191c923` |
 
 ⚠️ `pack.js` 的指纹随每次「刷新模型数据 / 移植上游修复」而变（它是构建产物）。
 上面的值对应**3.2.0（2026-11-16：目录刷新改为每日一次 + 账号变更即时）之后**的版本；

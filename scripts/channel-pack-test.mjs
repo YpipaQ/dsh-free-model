@@ -83,8 +83,25 @@ try {
   apply(ctx, { disableOpencode: true })
   await new Promise(resolve => setImmediate(resolve))
   assert.equal(adapters.has('opencode'), false, 'disabled account provider is not registered')
-  // 13 个原有渠道 + officeace + accio（2026-10-15 从 gitee 上游移植的两个云端渠道）。
-  assert.equal(adapters.size, 15, 'all other account providers remain registered')
+  /**
+   * 渠道清单断言。
+   *
+   * ⚠️ **改成逐 id 核对而不是只比数字**（2026-11-23）：原先写死 `size === 15`，
+   * 加 doubao 时报的是一句「all other account providers remain registered」——
+   * 看不出是「少了一家」还是「多了一家」，也没说是哪家。
+   * 逐 id 核对后，失败信息直接指出缺/多了谁。
+   */
+  const EXPECTED = [
+    'codearts', 'buddy', 'workbuddy', 'lobsterai', 'qoder', 'qodercn', 'trae',
+    'cline', 'loomy', 'raccoon', 'minimax', 'zcode', 'gemini',
+    'officeace', 'accio', 'doubao',
+  ]
+  const actual = [...adapters.keys()].sort()
+  const missing = EXPECTED.filter((id) => !adapters.has(id))
+  assert.deepEqual(missing, [], `以下渠道未注册：${missing.join(', ')}`)
+  assert.equal(adapters.size, EXPECTED.length,
+    `渠道数应为 ${EXPECTED.length}（多出的是：`
+    + `${actual.filter((id) => !EXPECTED.includes(id)).join(', ') || '无'}）`)
   assert.ok(adapters.has('officeace'), 'officeace（移植渠道）必须注册')
   assert.ok(adapters.has('accio'), 'accio（移植渠道）必须注册')
   // ⚠️ 四条**接线**必须真的接上 —— 这是上游 IKLTHB「哑锁」的形态：
@@ -181,7 +198,8 @@ try {
     visit(node.children)
   }
   visit(tree)
-  assert.equal(cards.length, 15)
+  // 16 = 15 家原有渠道 + doubao（2026-11-23 从 gitee 上游移植）
+  assert.equal(cards.length, 16)
   assert.equal(cards.includes('opencode'), false)
   assert.deepEqual([...cards].sort(), [...adapters.keys()].sort(), 'UI and mounted account providers agree')
   console.log('ok  actual channel page: 15 account cards (13 + officeace + accio), OpenCode removed')

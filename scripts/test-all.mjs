@@ -99,6 +99,8 @@ const suites = [
   ['channel-cline-snapshot-suffix', 'channel-cline-snapshot-suffix-test.mjs', []],
   // 上游 11-23：buddy 续期保活（闲置 7 天主动续）+ minimax 余额分页。
   ['channel-keepalive-pagesize', 'channel-keepalive-pagesize-test.mjs', []],
+  // 豆包渠道（照上游 0ea3e43e）：设备身份派生 / DSML 流式 / 签到排除。
+  ['channel-doubao', 'channel-doubao-test.mjs', []],
   ['channel-network', 'channel-network-test.mjs', []],
 ].filter(([name]) => only === null || name.startsWith(only))
 

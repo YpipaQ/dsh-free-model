@@ -29127,7 +29127,7 @@ ${captureLines}` : capture.stack;
 
 // vendor/channel-pack/src/index.ts
 import { credentialRef as credentialRef18 } from "@deepseek-ai/dsh-credentials";
-import { LlmError as LlmError22 } from "@deepseek-ai/dsh-llm";
+import { LlmError as LlmError23 } from "@deepseek-ai/dsh-llm";
 import Schema2 from "@deepseek-ai/schemastery";
 
 // vendor/channel-pack/src/catalog-broadcast.ts
@@ -32692,6 +32692,40 @@ function isProseTruncatedByStopString(text) {
   if (ticks % 2 === 0) return false;
   return /`$/.test(tail) || /<$/.test(tail) || /<\/think$/.test(tail);
 }
+function fixDsmlMarkers(text) {
+  const AFTER = "(?=\uFF5C|\\s|>|\\/|$|[tcip])";
+  return text.replace(new RegExp(`(<\\/?)\uFF5C{2,}DSML${AFTER}`, "g"), "$1\uFF5CDSML").replace(new RegExp(`DSML\uFF5C{2,}${AFTER}`, "g"), "DSML\uFF5C").replace(/(<\/?)｜DSML｜\s*(?:tool_)?calls>/g, "$1\uFF5CDSML\uFF5Ctool_calls>");
+}
+function createDsmlMarkerNormalizer() {
+  let pending2 = "";
+  const PREFIX_PATTERNS = ["<\uFF5C\uFF5CDSML", "</\uFF5C\uFF5CDSML", "DSML\uFF5C\uFF5C"];
+  const MAX_PENDING = 9;
+  function holdBackLen(s) {
+    const max = Math.min(s.length, MAX_PENDING);
+    for (let len = max; len >= 1; len--) {
+      const tail = s.slice(-len);
+      if (PREFIX_PATTERNS.some((p) => p.startsWith(tail))) return len;
+    }
+    return 0;
+  }
+  return {
+    /** 喂入一帧文本，返回可安全下发的部分（可能为空串）。 */
+    push(text) {
+      pending2 += text;
+      const fixed = fixDsmlMarkers(pending2);
+      const hold = holdBackLen(fixed);
+      const out = hold > 0 ? fixed.slice(0, fixed.length - hold) : fixed;
+      pending2 = hold > 0 ? fixed.slice(fixed.length - hold) : "";
+      return out;
+    },
+    /** 流结束：下发全部剩余（再做一次完整归一化兜底）。 */
+    flush() {
+      const out = fixDsmlMarkers(pending2);
+      pending2 = "";
+      return out;
+    }
+  };
+}
 
 // vendor/channel-pack/src/dead-model-store.ts
 import { existsSync as existsSync5, mkdirSync as mkdirSync4, readFileSync as readFileSync4, renameSync as renameSync4, writeFileSync as writeFileSync4 } from "node:fs";
@@ -33994,7 +34028,7 @@ var CodeArtsAdapter = class extends LlmAdapter {
    *
    * 设置页必须渲染被关闭的模型（否则用户无法重新打开），而 `listModels` 会按
    * 黑名单过滤掉它们 —— RPC 层只能凭裸 id 补回，展示名随之丢失
-   * （用户报障：「关闭的就没有显示倍率」）。CodeArts 目录虽无倍率，但同样
+   * （现场反馈：「关闭的就没有显示倍率」）。CodeArts 目录虽无倍率，但同样
    * 需要正确的 `name`（否则关闭项显示 `deepseek-v4-flash` 这类裸 id）。
    */
   listAllModels() {
@@ -35552,7 +35586,7 @@ var BuddyAdapter = class _BuddyAdapter extends LlmAdapter2 {
    * —— 新用户限时免费变体 —— **只由 `/v3/config` 下发**，且被
    * `craft`/`ask`/`plan` 三个 agent 引用（即服务端声明「对话里可选」），
    * 但**不在兜底表**里。白名单重建会把它丢掉，于是用户看不到那个免费变体，
-   * 而 IDE 里能看到（用户报障「hy4 preview 现在 ide 是免费我们还是 0.29」）。
+   * 而 IDE 里能看到（现场反馈「hy4 preview 现在 ide 是免费我们还是 0.29」）。
    *
    * 判据用 `agentReferenced`（服务端自己的「可选」信号）而非猜测 id 后缀 ——
    * 后缀规则不统一（`-f` / `-x` / `-sg` / `-ioa` 含义各异），猜错会放进
@@ -35648,7 +35682,7 @@ var BuddyAdapter = class _BuddyAdapter extends LlmAdapter2 {
    * 设置页（Channel Pack「显示列表」）必须把**被关闭的**模型也渲染出来，否则用户
    * 无法重新打开；而 `listModels` 会按黑名单过滤掉它们，RPC 层只能凭黑名单的
    * key（裸 id）补回 —— 那条路径拿不到展示名，只能退化成裸 id，**倍率随之丢失**
-   * （用户报障：「关闭的就没有显示倍率」）。
+   * （现场反馈：「关闭的就没有显示倍率」）。
    *
    * ⚠️ 同名消歧必须基于**未过滤**的全量集合：`displayNameFor(model, source)`
    * 而非 `listed`。用过滤后的集合会让「关掉其中一个同名模型」改变另一个的
@@ -36759,7 +36793,7 @@ var LOBSTERAI_HARD_CREDIT_MARKERS = [
   "not enough credit",
   "freecreditsused",
   "free credits used",
-  // 2026-09 补充（真实缺陷，用户报障）：额度耗尽的**实际文案**是
+  // 2026-09 补充（真实缺陷，现场反馈）：额度耗尽的**实际文案**是
   // 「免费额度已用完，请升级套餐」，而早期表里只有「额度用尽」「积分用完」
   // ——「已用完」与「用尽」字面不同，于是这个最主要的失败模式判成 `none`
   // （不换号、不记徽章），用户看到「一个账号用完出错但没有切换」。
@@ -37206,7 +37240,7 @@ var LobsteraiAdapter = class extends LlmAdapter3 {
    * - **`name` = `level`（产品侧档位名）**：纯展示。远端把 `level: 'max'` 映射到
    *   `openclawLevel: 'xhigh'`，用户在产品侧看到的就是 **Max**。
    *
-   * ⚠️ **历史缺陷**（用户报障 / Issue #IKHCZF）：早期用 `openclawLevel` 同时查
+   * ⚠️ **历史缺陷**（现场反馈 / Issue #IKHCZF）：早期用 `openclawLevel` 同时查
    * 展示名表，于是最强档显示成 **XHigh**，与产品侧命名 **Max** 不一致 ——
    * 用户按 IDE 里的「Max」找，界面上却只有「XHigh」。
    * 根因是把「wire 值」与「展示名」当成同一个概念。
@@ -37250,7 +37284,7 @@ var LobsteraiAdapter = class extends LlmAdapter3 {
    *
    * 设置页必须渲染被关闭的模型（否则用户无法重新打开），而 `listModels` 会按
    * 黑名单过滤掉它们 —— RPC 层只能凭裸 id 补回，展示名与倍率随之丢失
-   * （用户报障：「关闭的就没有显示倍率」）。详见 `model.list` 端点的注释。
+   * （现场反馈：「关闭的就没有显示倍率」）。详见 `model.list` 端点的注释。
    */
   listAllModels() {
     const source = this.remoteModels ?? this.staticFallbackModels();
@@ -37997,7 +38031,7 @@ function buildQoderInferPayload(ask, requestId = crypto.randomUUID()) {
     // ⚠️ **必须把调用方的工具定义真的发出去**：它是**顶层** `tools`
     // （客户端源码 `tools: o?.tools ?? []`）。早期硬编码 `[]` 让模型拿不到
     // 任何函数 schema，只能用正文里的 XML 文本臆造工具调用 ——
-    // 用户报障「qwen3.8-flash 执行任务出现任务调用 xml 泄露任务终止」。
+    // 现场反馈「qwen3.8-flash 执行任务出现任务调用 xml 泄露任务终止」。
     // 无工具时是**空数组**而非缺字段（与客户端一致）。
     tools: ask.tools ?? [],
     parameters,
@@ -38509,7 +38543,7 @@ var QODER = {
 var QODER_CN_FALLBACK_MODELS = [
   // ⚠️ 全部数值逐条对照本机 CN catalog-v6 的 chat 场景实解值（2026-09-27）。
   // 国际版曾因为「手工估值 + 单测只断言 id 列表」让价格漂移长期未被发现
-  // （14 个模型有偏差，用户报障）。改本表必须重新跑探针对照。
+  // （14 个模型有偏差，现场反馈）。改本表必须重新跑探针对照。
   //
   // ⚠️ **`contextWindow` 取官方档位表 `context_config` 的最大档，不是 `max_input_tokens`。**
   //
@@ -39374,7 +39408,7 @@ var QoderAdapter = class extends LlmAdapter4 {
    *
    * 设置页必须渲染被关闭的模型（否则用户无法重新打开），而 `listModels` 会按
    * 黑名单过滤掉它们 —— RPC 层只能凭裸 id 补回，展示名与倍率随之丢失
-   * （用户报障：「关闭的就没有显示倍率」）。详见 `model.list` 端点的注释。
+   * （现场反馈：「关闭的就没有显示倍率」）。详见 `model.list` 端点的注释。
    */
   listAllModels() {
     return this.product.fallbackModels.map((model) => ({ id: model.id, name: qoderDisplayName(model) }));
@@ -39399,7 +39433,7 @@ var QoderAdapter = class extends LlmAdapter4 {
    * ⚠️ **`reasoning` 是「思考强度」选择器出现在模型菜单里的唯一入口**
    * （composer 读 `resolveModel().reasoning`）。此前本适配器**只声明了
    * `context`，从不声明 `reasoning`** → 中国版/国际版全都看不到档位选择器，
-   * 尽管目录早已下发 `thinking_config`（用户报障「qoder中国版可以设置思考档位，
+   * 尽管目录早已下发 `thinking_config`（现场反馈「qoder中国版可以设置思考档位，
    * 我们应该按照他的设置给出可设置的档位选择」）。
    */
   async resolveModel(provider, model, _signal) {
@@ -41087,7 +41121,7 @@ var TraeAdapter = class extends LlmAdapter5 {
    * `listModels` 会按用户黑名单过滤（Channel Pack「显示列表」开关），于是**被关闭的
    * 模型不在其返回值里**。而设置页必须把关闭的模型也渲染出来（否则用户无法重新
    * 打开），RPC 层只能凭黑名单的 key（裸 id）补回 —— 那条路径拿不到展示名，
-   * 只能回退成裸 id，**倍率与模型显示名随之丢失**（用户报障：「关闭的就没有显示
+   * 只能回退成裸 id，**倍率与模型显示名随之丢失**（现场反馈：「关闭的就没有显示
    * 倍率，关闭的应该也显示倍率」）。
    *
    * 故这里提供「不过滤黑名单」的目录，由 `model.list` 端点使用：它据此拿到
@@ -42637,7 +42671,7 @@ var ClineAdapter = class extends LlmAdapter6 {
    *
    * 设置页必须渲染被关闭的模型（否则用户无法重新打开），而 `listModels` 会按
    * 黑名单过滤掉它们 —— RPC 层只能凭裸 id 补回，展示名随之丢失
-   * （用户报障：「关闭的就没有显示倍率」）。详见 `model.list` 端点的注释。
+   * （现场反馈：「关闭的就没有显示倍率」）。详见 `model.list` 端点的注释。
    *
    * ⚠️ 本方法是**同步**的（与 RPC 层 `ModelCatalogSource` 契约一致），
    * 故它只能读已缓存的目录。首次调用若缓存为空会触发一次**后台**加载，
@@ -43601,7 +43635,7 @@ var RACCOON_FALLBACK_MODELS = [
   },
   {
     id: "sn-kimi-k3",
-    // ⚠️ 1 倍也要显示（用户报障「为什么 Kimi-K3 没有倍率，ide 是 1 倍，
+    // ⚠️ 1 倍也要显示（现场反馈「为什么 Kimi-K3 没有倍率，ide 是 1 倍，
     // 1 倍也要显示倍率」）—— 见 `raccoonDisplayName` 的注释。
     name: "Kimi-K3 \xB7 x1",
     contextWindow: 1e6,
@@ -43636,7 +43670,7 @@ function raccoonSupportsImage(modelId, tags) {
 var RACCOON = {
   id: "raccoon",
   // ⚠️ 用『Raccoon (商汤)』而非『Raccoon Work (商汤)』—— 后者在 Channel Pack 的
-  // provider Tab 里**触发换行**（用户报障）。客户端内的品牌名是 `Raccoon Work`，
+  // provider Tab 里**触发换行**（现场反馈）。客户端内的品牌名是 `Raccoon Work`，
   // 但那个词组太长；缩短成 `Raccoon` 后与其余 provider 的标签长度一致
   //（`CodeBuddy (腾讯)` / `LobsterAI (有道)` / `WorkBuddy (国际版)`）。
   displayName: "Raccoon (\u5546\u6C64)",
@@ -46802,7 +46836,7 @@ var TraeAuth = class _TraeAuth extends Service5 {
    * 于是**下一次** `listModels` / `resolveModel` 会再拉一次。
    *
    * 「未登录 TRAE」恰好就是恒空的情形：用户每打开一次模型选择器、每次
-   * 解析模型都发起一次真实 HTTP 请求。用户报障的日志刷屏
+   * 解析模型都发起一次真实 HTTP 请求。现场反馈的日志刷屏
    * （同一行 `fetchModels: calling …` 重复数十次）正是这么来的。
    *
    * 故这里**连同空结果一起缓存**，并给一个短 TTL（登录后 30s 内即可自愈，
@@ -46865,7 +46899,7 @@ var TraeAuth = class _TraeAuth extends Service5 {
         provider: this.product.id,
         // ⚠️ 用 `traeDisplayNickname`（手机号优先）而非直接取 `nickname`：
         // 服务端的 ScreenName 是**按 uid 自动生成的默认名**，多账号无法区分。
-        // 见该函数的说明（用户报障 2026-09-27）。
+        // 见该函数的说明（2026-09-27 现场反馈）。
         nickname: traeDisplayNickname(credential, flowOptions.accountId),
         enabled: true,
         credentialRef: flowOptions.refName ?? this.credentialRefName,
@@ -47077,7 +47111,7 @@ var TraeAuth = class _TraeAuth extends Service5 {
   /**
    * 一次性修复**老账号**的展示名：补 `GetUserInfo` 拿脱敏手机号并重算昵称。
    *
-   * ## 为什么需要它（真实缺陷，用户报障 2026-09-27）
+   * ## 为什么需要它（真实缺陷，2026-09-27 现场反馈）
    *
    * > 用 trae provider 登录后用户名字显示无法区分各个用户，有其他名字昵称或者
    * > 手机尾号之类的信息可以区分吗？
@@ -47199,10 +47233,10 @@ var TraeAuth = class _TraeAuth extends Service5 {
    * **成功路径一律不打印**。早期这里用 `console.warn` 打了「calling / got N
    * models」，而本方法在冷启动阶段会被调用多次（每次 `listModels` /
    * `resolveModel` 都可能触发，见 `TraeAdapter.ensureRemoteModels`），
-   * 于是整个日志被同一行刷屏 —— 用户报障「fetch 的 log 似乎太多了」。
+   * 于是整个日志被同一行刷屏 —— 现场反馈「fetch 的 log 似乎太多了」。
    *
    * **「没有凭据」不是异常**：未登录 TRAE 的用户每次列模型都会走到这条分支，
-   * 打日志只会制造噪声（用户报障「没有账号不需要显示 no credential
+   * 打日志只会制造噪声（现场反馈「没有账号不需要显示 no credential
    * resolved from store」）。真正需要关注的失败（HTTP 非 2xx、网络异常）
    * 才记录。
    */
@@ -50386,7 +50420,7 @@ var RaccoonAuth = class extends Service8 {
    * ⚠️ **不触碰** `lastRefreshError`：那属于单凭据路径，
    * 被多账号操作污染会让 UI 显示错误的失效提示。
    *
-   * ⚠️ **必须把新过期时间写回账号池**（真实缺陷，用户报障）：
+   * ⚠️ **必须把新过期时间写回账号池**（真实缺陷，现场反馈）：
    * 只更新凭据、不更新账号池，会让 Channel Pack 一直显示「已过期」——
    * 因为 UI 读的是账号池的 `expiresAt`，而它停留在续期前的旧值。
    * 实测该账号的 JWT `exp` 已是 15:09（有效），账号池却是 12:02（已过期），
@@ -50676,7 +50710,7 @@ var LoomyBalanceSelector = class {
   /**
    * 查一个账号的余额（带 TTL 缓存）。
    *
-   * ⚠️ **查询失败只缓存 5 秒，不缓存满 60 秒**（真实缺陷，用户报障 2026-09-29）：
+   * ⚠️ **查询失败只缓存 5 秒，不缓存满 60 秒**（真实缺陷，现场反馈 2026-09-29）：
    * 失败条目会归入 `none` 档，锁定时被判「不可用」—— 于是**一次网络抖动**
    * 就让整个账号池在 60 秒内**全部不可用**，用户看到「今日额度都已用尽」
    * 而实际每个号都还有 5000。实测当时的 4 个号：4965 / 5000 / 5000 / 0。
@@ -50822,7 +50856,7 @@ var ZCODE_FALLBACK_MODELS = [
 var ZCODE = {
   id: "zcode",
   // ⚠ 用『ZCode (智谱)』而非长名 —— 后者在 Channel Pack 的 provider Tab 里
-  // **触发换行**（与 Raccoon 同样的用户报障）。
+  // **触发换行**（与 Raccoon 同样的现场反馈）。
   // 与 `plugin-src/client/channel-pack.js` 的 `PROVIDERS` label 保持一致。
   displayName: "ZCode (\u667A\u8C31)",
   /**
@@ -51590,7 +51624,7 @@ var ZcodeCaptchaBrowser = class {
    * ```
    *
    * ⚠ 原来的「预测式换页」让**每次空闲后都白付约 2.7 秒**建页成本 ——
-   * 这正是用户报障「一键签到里 ZCode 很久」的成因（而不是 captcha 慢）。
+   * 这正是现场反馈「一键签到里 ZCode 很久」的成因（而不是 captcha 慢）。
    * 改成失败兜底后：**常态省约 2.7 秒、不增加 captcha 调用次数**，
    * 真遇到 `F001` 时的自愈能力与原来一致（甚至更快：
    * 原来"先换页"是必然付费，现在只在真失败时才付）。
@@ -54324,7 +54358,7 @@ var ZcodeAuth = class extends Service9 {
    * 修复前的形态是**两份真相**：`channel-pack-rpc.ts` 的注入回调自己
    * `fetchCaptchaConfig()` 拿配置产 param，而 region 走本方法的**默认参数**
    * `ZCODE_CAPTCHA_FALLBACK.region` ⇒ 非 cn 区账号 100% 领不到
-   * （用户报障：15/15 全部 3007；同账号改用配置里的 region 后立即成功 +100M）。
+   * （现场反馈：15/15 全部 3007；同账号改用配置里的 region 后立即成功 +100M）。
    *
    * ⇒ 这里解析**一次**配置，region 从它取、并把它传给注入回调：
    * 「产 param 的那份」与「写 region 的那份」从此是**同一个对象**。
@@ -54558,7 +54592,7 @@ var ZcodeAuth = class extends Service9 {
    *
    * ## ⚠⚠ 这里曾经有一个**数据破坏缺陷**（真实缺陷，2026-10-02）
    *
-   * **用户报障**：「登录了 2 个账号（两个不同微信各自收到 bigmodel 登录通知），
+   * **现场反馈**：「登录了 2 个账号（两个不同微信各自收到 bigmodel 登录通知），
    * 第二个账号有余额，但插件刷新积分显示 0，发消息报『额度已用尽』，
    * 而 IDE 里同一个账号发消息能收到回复」。
    *
@@ -54693,7 +54727,7 @@ var ZcodeAuth = class extends Service9 {
   /**
    * ★ **关掉外挂 chromium** —— 只由**领取积分**流程在收尾时调用。
    *
-   * ## 为什么需要（用户报障 2026-10-02）
+   * ## 为什么需要（现场反馈 2026-10-02）
    *
    * > 领取完 chromium 还是留存在任务栏，图标还会闪烁。
    *
@@ -55441,7 +55475,7 @@ function fallbackToRemote3(model) {
     supportsImage: model.supportsImage,
     /**
      * ⚠ **档位必须一起搬** —— 漏了它，`resolveModel()` 就拿不到
-     * `reasoningLevels`，思考档位选择器不会出现（用户报障的那个缺陷）。
+     * `reasoningLevels`，思考档位选择器不会出现（现场反馈的那个缺陷）。
      */
     ...model.reasoningLevels !== void 0 ? { reasoningLevels: model.reasoningLevels } : {},
     ...model.defaultReasoningLevel !== void 0 ? { defaultReasoningLevel: model.defaultReasoningLevel } : {}
@@ -55517,7 +55551,7 @@ var ZcodeAdapter = class extends LlmAdapter9 {
    *
    * 设置页需要它渲染被关闭的模型 —— 否则那些条目只能凭 `disabledMap` 的 key
    * 补回，而那条路径拿不到展示名，会退化成裸 id
-   * （`AGENTS.md` 记过 Raccoon 的同款用户报障）。
+   * （`AGENTS.md` 记过 Raccoon 的同款现场反馈）。
    */
   listAllModels() {
     const source = this.remoteModels ?? this.product.fallbackModels.map(fallbackToRemote3);
@@ -55701,7 +55735,7 @@ var ZcodeAdapter = class extends LlmAdapter9 {
    * 2. **用户中断的通道在流开始之前就被摘掉**：`options.signal` 的 abort
    *    不再转发给 `controller`，`response.body` 的读取永不中止。
    *
-   * 两者叠加的后果正是用户报障（本机实测三次、含一次 1018.7 秒）：
+   * 两者叠加的后果正是现场反馈（本机实测三次、含一次 1018.7 秒）：
    * UI 停在「深度求索中，用时 5分27秒…」不动，模型既不输出思考也不输出正文，
    * **「停止」按钮点了没反应，只能重启宿主**。
    *
@@ -55714,7 +55748,7 @@ var ZcodeAdapter = class extends LlmAdapter9 {
    *
    * 本方法起的是**整轮墙钟**，只兜「captcha 卡死 / 上游彻底静默」。
    * 「模型长时间大思考」**必须**由**空闲超时**（`streamIdleTimeoutMs`，
-   * 每帧续期）来判，否则会出现用户报障的死循环：
+   * 每帧续期）来判，否则会出现现场反馈的死循环：
    * 思考满 180s → abort → `TIMEOUT`（在 harness 可重试集合内）→ 重试
    * → 又大思考 → 又撞满 ⇒ 永远出不来。
    *
@@ -57675,7 +57709,7 @@ async function requestQuotaSummary(credential, fetcher, project) {
     return {
       balance: null,
       // ⚠️ 403 有两种成因，文案不能一概说"凭据已失效"：本账号缺 5 小时窗口时
-      // 上游对 `{}` 回 `SUBSCRIPTION_REQUIRED`，凭据其实是好的（用户报障形态）。
+      // 上游对 `{}` 回 `SUBSCRIPTION_REQUIRED`，凭据其实是好的（现场反馈形态）。
       // 这里把上游的 `reason` 透出来，否则面板只会误导人去重新登录。
       error: response.status === 401 || response.status === 403 ? `\u914D\u989D\u67E5\u8BE2\u88AB\u62D2\uFF08HTTP ${response.status}\uFF09${quotaRejectionHint(text)}` : `\u914D\u989D\u67E5\u8BE2\u5931\u8D25\uFF08HTTP ${response.status}\uFF09\uFF1A${text.slice(0, 200)}`
     };
@@ -61086,7 +61120,7 @@ function isUnsupportedCheckin(message2) {
   return message2.includes("\u4E0D\u652F\u6301\u6BCF\u65E5\u7B7E\u5230") || message2.includes("unsupported provider");
 }
 function isAutoCheckinExcluded(provider) {
-  return provider === ZCODE.id;
+  return provider === ZCODE.id || provider === "doubao";
 }
 function describeRun(totals) {
   const parts = [];
@@ -61959,7 +61993,7 @@ function registerChannelPackEndpoints(ctx, pool, codearts, buddy, workbuddy, lob
             await pool.updateAccount(id, {
               // ⚠️ 用 `traeDisplayNickname`（手机号优先）而非直接取 `nickname`：
               // 服务端 ScreenName 是**按 uid 自动生成的默认名**，多账号无法区分
-              // （用户报障 2026-09-27）。见该函数的说明。
+              // （2026-09-27 现场反馈）。见该函数的说明。
               nickname: traeDisplayNickname(credential, id),
               expiresAt: credential !== void 0 ? traeCredentialExpiresAtMs(credential) : void 0,
               refreshable: credential !== void 0 && isTraeRefreshable(credential)
@@ -62188,7 +62222,7 @@ function registerChannelPackEndpoints(ctx, pool, codearts, buddy, workbuddy, lob
             await pool.updateAccount(id, {
               // ⚠️ 用 `geminiAccountLabel`（邮箱优先）而非 `accountId.slice(0, 8)`：
               // `sub` 是 21 位数字，截前 8 位得到 `Gemini 10500520` 这种**不可辨认**
-              // 的展示名（用户报障 2026-10-03）。`sub` 的价值是「稳定标识」，不是
+              // 的展示名（现场反馈 2026-10-03）。`sub` 的价值是「稳定标识」，不是
               // 「显示名」—— 展示要的是可辨识，邮箱正好。
               // 取不到邮箱时该函数回退 `sub`，两者都无则退化为池 id。
               nickname: geminiAccountLabel(credential) ?? id,
@@ -62840,7 +62874,7 @@ function registerChannelPackEndpoints(ctx, pool, codearts, buddy, workbuddy, lob
             // `{code:0, message:"success"}`，与真正领取成功**无法区分**。
             // 早期照抄 LobsterAI 传了 `precheckStatus: false`（那是「领取流程内部
             // 已做 slot/context 预检」的理由，TRAE 没有这回事），于是已签到的账号
-            // 被报成「领取成功」（用户报障：显示成功但 +0 积分）。
+            // 被报成「领取成功」（现场反馈：显示成功但 +0 积分）。
             // 判据只能是 status 端点的 `checked_in`。
             fetchStatus: (credential) => fetchTraeCheckinStatus(credential, TRAE, fetch),
             claim: (credential, _product, entry) => claimTraeDailyCheckin(
@@ -63482,7 +63516,7 @@ function registerChannelPackEndpoints(ctx, pool, codearts, buddy, workbuddy, lob
               // ⚠️ **优先用网关报的真实上游渠道**（`alibaba` 等，见
               // `src/cline-routing.ts`）；它没报时才回落到模型命名空间
               // （`cline-pass` / `cline-free`）—— 后者是**订阅通道**
-              // （甚至可能是厂商名），不是 serving channel，用户报障点正在于此。
+              // （甚至可能是厂商名），不是 serving channel，现场反馈点正在于此。
               upstream: row.upstream.length > 0 ? row.upstream : clineUpstreamOf(row.model),
               // ⚠️ 必须透传「是否收到 usage」：表格据此把未知显示成 `—`,
               // 而不是 0（0 会被读成「瞬间完成、没花 token」）。
@@ -63497,7 +63531,7 @@ function registerChannelPackEndpoints(ctx, pool, codearts, buddy, workbuddy, lob
               ttftMs: row.ttftMs,
               // ⚠️ 首个**正文**块耗时必须透传：展示层的「输出速率」拿它当分母
               // 起点（分子是正文 token 数）。缺了它速率会虚高到物理不可能的值
-              // —— 用户报障的 `11814.8 t/s` 就是分子分母跨阶段的产物。
+              // —— 现场反馈的 `11814.8 t/s` 就是分子分母跨阶段的产物。
               ttfcMs: row.ttfcMs,
               totalMs: row.totalMs,
               ...row.error !== void 0 ? { error: row.error } : {}
@@ -68084,7 +68118,7 @@ var GeminiAuth = class extends Service11 {
       fetcher: this.fetchImpl,
       ...this.options.callbackPort === void 0 ? {} : { callbackPort: this.options.callbackPort },
       // 身份正常情况下从令牌响应的 `id_token` 解出（零额外请求）；这里的
-      // userinfo 只是兜底。**兜底失败必须留日志** —— 2026-10-03 用户报障
+      // userinfo 只是兜底。**兜底失败必须留日志** —— 2026-10-03 现场反馈
       // 「昵称退化成池 id」时，失败被静默吞成 `{}`，现场零线索可查。
       onIdentityFailure: (reason) => {
         this.ctx.logger?.warn?.(
@@ -69250,7 +69284,7 @@ function createModelCatalog(deps, config) {
     },
     /**
      * ⚠️ **同步**（契约要求，见 `ModelCatalogConfig.syncCatalog` 的说明）。
-     * **不套黑名单** —— 设置页要能看到已关闭模型的倍率（用户报障：
+     * **不套黑名单** —— 设置页要能看到已关闭模型的倍率（现场反馈：
      * 「关闭的就没有显示倍率」）。
      */
     listAllModels() {
@@ -70279,7 +70313,7 @@ var AccioAdapter = class extends LlmAdapter12 {
    *
    * 设置页必须能渲染已关闭的模型（否则用户无法重新打开），而 `listModels`
    * 会按黑名单过滤掉它们 ⇒ RPC 层只能凭裸 id 补回、展示名与倍率随之丢失
-   * （用户报障：「关闭的就没有显示倍率」）。
+   * （现场反馈：「关闭的就没有显示倍率」）。
    */
   listAllModels() {
     return this.catalog.listAllModels();
@@ -70563,8 +70597,745 @@ function registerAccioLlm(ctx, options) {
   return adapter;
 }
 
-// vendor/channel-pack/src/gemini-sigstore.ts
+// vendor/channel-pack/src/doubao-adapter.ts
+import { LlmAdapter as LlmAdapter13, LlmError as LlmError21 } from "@deepseek-ai/dsh-llm";
+
+// vendor/channel-pack/src/doubao-upstream.ts
+import { randomUUID as randomUUID14 } from "node:crypto";
+
+// vendor/channel-pack/src/doubao.ts
 import { createHash as createHash11 } from "node:crypto";
+function parseDoubaoCredential(raw) {
+  if (typeof raw !== "string" || raw.length === 0) return void 0;
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return void 0;
+  }
+  if (typeof parsed !== "object" || parsed === null) return void 0;
+  const o = parsed;
+  const out = {};
+  if (typeof o.cookie === "string" && o.cookie.length > 0) out.cookie = o.cookie;
+  if (typeof o.accountKey === "string" && o.accountKey.length > 0) out.accountKey = o.accountKey;
+  if (typeof o.deviceId === "string" && o.deviceId.length > 0) out.deviceId = o.deviceId;
+  if (typeof o.webId === "string" && o.webId.length > 0) out.webId = o.webId;
+  if (typeof o.nickname === "string" && o.nickname.length > 0) out.nickname = o.nickname;
+  return out;
+}
+function seededStream2(seed, salt, nbytes) {
+  const prefix = `${salt}:${seed}`;
+  const result = [];
+  let counter = 0;
+  while (result.length < nbytes) {
+    const counterBuf = new Uint8Array(4);
+    counterBuf[0] = counter >> 24 & 255;
+    counterBuf[1] = counter >> 16 & 255;
+    counterBuf[2] = counter >> 8 & 255;
+    counterBuf[3] = counter & 255;
+    const h = createHash11("sha256");
+    h.update(prefix, "utf8");
+    h.update(counterBuf);
+    for (const b of h.digest()) {
+      result.push(b);
+      if (result.length >= nbytes) break;
+    }
+    counter++;
+  }
+  return result.slice(0, nbytes);
+}
+function seededDigits2(n, seed, salt) {
+  const bs = seededStream2(seed, salt, n);
+  return bs.map((b) => (b % 10).toString()).join("");
+}
+function doubaoDerivedDeviceIdentity(accountKey) {
+  return {
+    deviceId: seededDigits2(19, accountKey, "dbdev"),
+    webId: seededDigits2(19, accountKey, "dbweb"),
+    teaUuid: seededDigits2(19, accountKey, "dbtea")
+  };
+}
+function isRegisteredDeviceShape(value) {
+  if (typeof value !== "string" || value.length === 0) return false;
+  return /^\d{15,21}$/.test(value);
+}
+function doubaoDeviceIdentityOf(credential) {
+  const seed = credential.accountKey?.length ? credential.accountKey : sessionIdFromCookie(credential.cookie) ?? "doubao-anon";
+  const derived = doubaoDerivedDeviceIdentity(seed);
+  return {
+    deviceId: isRegisteredDeviceShape(credential.deviceId) ? credential.deviceId : derived.deviceId,
+    webId: isRegisteredDeviceShape(credential.webId) ? credential.webId : derived.webId,
+    teaUuid: derived.teaUuid
+  };
+}
+function sessionIdFromCookie(cookie) {
+  if (typeof cookie !== "string" || cookie.length === 0) return void 0;
+  for (const pair of cookie.split(";")) {
+    const eq = pair.indexOf("=");
+    if (eq <= 0) continue;
+    if (pair.slice(0, eq).trim() !== "sessionid") continue;
+    const value = pair.slice(eq + 1).trim();
+    return value.length > 0 ? value : void 0;
+  }
+  return void 0;
+}
+
+// vendor/channel-pack/src/doubao-upstream.ts
+var DOUBAO_WEB_BASE_URL = "https://www.doubao.com";
+var DOUBAO_BRIEF_LIST_PATH = "/alice/slot/action_bar_v3/brief_list";
+var DOUBAO_CHAT_PATH = "/chat/completion";
+var DOUBAO_BOT_ID = "7338286299411103781";
+var DOUBAO_CLIENT_VERSION = "2.31.4";
+var DOUBAO_RUNTIME_VERSION = "3.39.0";
+var DOUBAO_CHROMIUM_VERSION = "147.0.7727.149";
+var DOUBAO_HTTP_TIMEOUT_MS = 15e3;
+var DOUBAO_CHAT_TIMEOUT_MS = 18e4;
+function doubaoUpstreamReasonOf(bodyText) {
+  if (bodyText.length === 0) return "";
+  let parsed;
+  try {
+    parsed = JSON.parse(bodyText);
+  } catch {
+    return "";
+  }
+  if (typeof parsed !== "object" || parsed === null) return "";
+  const record = parsed;
+  const candidates = [record.msg, record.message, record.error?.msg, record.error?.message];
+  for (const value of candidates) {
+    if (typeof value === "string" && value.trim().length > 0) {
+      return value.trim().slice(0, 200);
+    }
+  }
+  return "";
+}
+function doubaoHeaders(cookie, extra) {
+  return {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/" + DOUBAO_CHROMIUM_VERSION + " Safari/537.36 SamanthaDoubao/" + DOUBAO_CLIENT_VERSION,
+    Referer: "chrome://doubao-chat/",
+    accept: "*/*",
+    "accept-language": "zh-CN,zh;q=0.9",
+    "sec-ch-ua": '"Chromium";v="147", "Not.A/Brand";v="8"',
+    "sec-ch-ua-mobile": "?0",
+    "sec-ch-ua-platform": '"Windows"',
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "same-origin",
+    "agw-js-conv": "str",
+    "x-flow-trace": randomUUID14().replace(/-/g, "") + "-" + randomUUID14().replace(/-/g, "") + "-01",
+    "last-event-id": "undefined",
+    cookie,
+    ...extra
+  };
+}
+function doubaoQuery(credential) {
+  const { deviceId, webId, teaUuid } = doubaoDeviceIdentityOf(credential);
+  return new URLSearchParams({
+    aid: "582478",
+    real_aid: "582478",
+    version_code: "20800",
+    pc_version: DOUBAO_CLIENT_VERSION,
+    device_id: deviceId,
+    tea_uuid: teaUuid,
+    web_id: webId,
+    fp: "verify_" + deviceId,
+    chromium_version: DOUBAO_CHROMIUM_VERSION,
+    runtime_version: DOUBAO_RUNTIME_VERSION,
+    channel: "win",
+    language: "zh",
+    region: "CN",
+    sys_region: "CN",
+    tz_name: "Asia/Shanghai",
+    pkg_type: "release_version",
+    client_platform: "pc_client",
+    device_platform: "web",
+    doubao_device_platform: "desktop",
+    web_platform: "desktop",
+    samantha_web: "1",
+    "use-olympus-account": "1",
+    web_tab_id: randomUUID14()
+  });
+}
+function parseDoubaoEnvelope(raw) {
+  try {
+    const parsed = JSON.parse(raw);
+    if (typeof parsed !== "object" || parsed === null) return void 0;
+    return parsed;
+  } catch {
+    return void 0;
+  }
+}
+function doubaoReasoningEfforts(value) {
+  if (typeof value !== "object" || value === null) return void 0;
+  const options = value.option_list;
+  if (!Array.isArray(options)) return void 0;
+  const efforts = [];
+  const seen = /* @__PURE__ */ new Set();
+  for (const option of options) {
+    if (typeof option !== "object" || option === null) continue;
+    const item = option;
+    if (typeof item.level !== "number" && typeof item.level !== "string" || typeof item.name !== "string") continue;
+    const id = String(item.level);
+    const name2 = item.name.trim();
+    if (!/^\d+$/.test(id) || name2.length === 0 || seen.has(id)) continue;
+    seen.add(id);
+    efforts.push({ id, name: name2 });
+  }
+  return efforts.length === 0 ? void 0 : { efforts };
+}
+function doubaoModeId(value) {
+  return value === 1 || value === "1" ? "1" : value === 3 || value === "3" ? "3" : void 0;
+}
+function doubaoRemoteModels(payload) {
+  const found = /* @__PURE__ */ new Map();
+  const visit = (node, menuMode, reasoningEnabled = false) => {
+    if (Array.isArray(node)) {
+      for (const item of node) visit(item, menuMode, reasoningEnabled);
+      return;
+    }
+    if (typeof node !== "object" || node === null) return;
+    const record = node;
+    const mode = doubaoModeId(record.mode_id) ?? menuMode;
+    const enabled = typeof record.show_reasoning_effort === "boolean" ? record.show_reasoning_effort : reasoningEnabled;
+    const key = record.model_item_key;
+    if ((typeof key === "string" || typeof key === "number") && key !== "") {
+      const id = String(key);
+      const rows = found.get(id) ?? [];
+      rows.push({
+        name: typeof record.name === "string" ? record.name.trim() : "",
+        tags: doubaoTagList(record.tag_list),
+        menuMode: mode,
+        defaultMode: doubaoModeId(record.default_mode),
+        reasoning: enabled ? doubaoReasoningEfforts(record.reasoning_effort_config) : void 0
+      });
+      found.set(id, rows);
+    }
+    for (const value of Object.values(record)) visit(value, mode, enabled);
+  };
+  visit(payload);
+  return [...found].map(([key, rows]) => {
+    const menu = rows.filter((row) => row.menuMode !== void 0);
+    const candidates = menu.length > 0 ? menu : rows;
+    const modeOf = (row) => row.menuMode ?? row.defaultMode ?? "1";
+    const modes = new Set(candidates.filter((row) => row.menuMode !== void 0 || row.defaultMode !== void 0).map(modeOf));
+    const defaults = new Set(candidates.flatMap((row) => row.defaultMode === void 0 ? [] : [row.defaultMode]));
+    const preferred = defaults.size === 1 ? [...defaults][0] : void 0;
+    const modeId = preferred !== void 0 && modes.has(preferred) ? preferred : modes.has("1") || !modes.has("3") ? "1" : "3";
+    const chosen = candidates.filter((row) => modeOf(row) === modeId);
+    const reasoning = chosen[0]?.reasoning;
+    const sameEfforts = reasoning !== void 0 && chosen.every((row) => JSON.stringify(row.reasoning) === JSON.stringify(reasoning));
+    const display = [...chosen, ...rows];
+    return {
+      key,
+      name: display.find((row) => row.name.length > 0)?.name ?? key,
+      modeId,
+      tags: display.find((row) => row.tags.length > 0)?.tags ?? [],
+      ...sameEfforts ? { reasoning } : {}
+    };
+  });
+}
+function doubaoTagList(value) {
+  if (!Array.isArray(value)) return [];
+  const out = [];
+  for (const item of value) {
+    const text = typeof item === "string" ? item : typeof item?.text === "string" ? String(item.text) : "";
+    const trimmed = text.trim();
+    if (trimmed.length > 0) out.push(trimmed);
+  }
+  return out;
+}
+function doubaoTagSuffix(tags) {
+  const parts = tags.map((tag2) => tag2.trim()).filter((tag2) => tag2.length > 0);
+  return parts.length > 0 ? parts.join(" \xB7 ") : void 0;
+}
+
+// vendor/channel-pack/src/doubao-adapter.ts
+var DOUBAO_PROVIDER = "doubao";
+var DOUBAO_DISPLAY_NAME = "\u8C46\u5305\uFF08Doubao\uFF09";
+var DOUBAO_FALLBACK_MODELS = [
+  { key: "0", name: "\u8C46\u5305 \u5FEB\u901F", modeId: "1", tags: [] },
+  { key: "3", name: "\u8C46\u5305 \u4E13\u5BB6", modeId: "1", tags: [] },
+  { key: "9", name: "\u8C46\u5305 2.1 Auto", modeId: "3", tags: ["\u5C0F\u989D\u514D\u8D39"] },
+  { key: "seed-lite-7b", name: "\u8C46\u5305 2.1 Lite", modeId: "3", tags: ["\u9650\u65F6\u4F18\u60E0 0.01x"] },
+  { key: "5", name: "\u8C46\u5305 2.1 Pro", modeId: "3", tags: ["0.65x"] },
+  { key: "person-deepseek-v4-1-flash-261017", name: "DeepSeek V4.1 Flash", modeId: "3", tags: ["\u9650\u65F6\u4F18\u60E0 0.01x"], reasoning: { efforts: [{ id: "3", name: "\u4F4E" }, { id: "4", name: "\u4E2D" }, { id: "5", name: "\u9AD8" }, { id: "6", name: "\u6781\u9AD8" }, { id: "7", name: "\u6700\u9AD8" }] } },
+  { key: "person-qwen4-max", name: "Qwen 4 Max", modeId: "3", tags: ["\u65B0\u4E0A\u7EBF 0.47x"] },
+  { key: "person-kimi-k3-1-pro-261111", name: "Kimi K3.1 Pro", modeId: "3", tags: ["0.95x"] },
+  { key: "person-kimi-k3-1-pro-highspeed-261111", name: "Kimi K3.1 Pro \u9AD8\u901F", modeId: "3", tags: ["1.44x"] },
+  { key: "person-kimi-k3-261111", name: "Kimi K3", modeId: "3", tags: ["1.48x"] },
+  { key: "person-glm-5-3-261111", name: "GLM 5.3", modeId: "3", tags: ["0.80x"] },
+  { key: "person-glm-5-3-flash-261111", name: "GLM 5.3 Flash", modeId: "3", tags: ["0.08x"] },
+  { key: "person-deepseek-v4-pro-ga-260813", name: "DeepSeek V4 Pro", modeId: "3", tags: ["0.46x"] },
+  { key: "person-qwen3-8-max", name: "Qwen 3.8 Max", modeId: "3", tags: ["0.74x"] },
+  { key: "person-qwen3-8-flash", name: "Qwen 3.8 Flash", modeId: "3", tags: ["0.05x"] }
+];
+function parseDoubaoFrames(raw) {
+  const out = [];
+  let event = "";
+  let dataLines = [];
+  const flush = () => {
+    if (event.length === 0 && dataLines.length === 0) return;
+    out.push({ event, data: dataLines.join("\n") });
+    event = "";
+    dataLines = [];
+  };
+  for (const rawLine of raw.split("\n")) {
+    const line2 = rawLine.replace(/\r$/, "");
+    if (line2 === "") {
+      flush();
+      continue;
+    }
+    if (line2.startsWith("event:")) event = line2.slice(6).trim();
+    else if (line2.startsWith("data:")) dataLines.push(line2.slice(5).trimStart());
+  }
+  flush();
+  return out;
+}
+function doubaoStreamErrorOf(data) {
+  let parsed;
+  try {
+    parsed = JSON.parse(data);
+  } catch {
+    return void 0;
+  }
+  if (typeof parsed !== "object" || parsed === null) return void 0;
+  const record = parsed;
+  const code = typeof record.code === "number" ? record.code : 0;
+  if (code === 0) return void 0;
+  const message2 = typeof record.message === "string" ? record.message : typeof record.msg === "string" ? record.msg : "";
+  return { code, message: message2.length > 0 ? message2 : "code " + code };
+}
+function resolveRemoteModel(model, catalog) {
+  const found = catalog.find((m) => m.key === model);
+  if (found !== void 0) return found;
+  return { key: model, name: model, modeId: "1", tags: [] };
+}
+function buildDoubaoChatBody(options, remote) {
+  const messages = normalizeHarnessMessages(options.messages);
+  const parts = [];
+  if (options.system !== void 0) parts.push(contentToText4(options.system));
+  for (const message2 of messages) {
+    const text = contentToText4(message2.content);
+    if (text.length === 0) continue;
+    parts.push((message2.role === "assistant" ? " assistant: " : " user: ") + text);
+  }
+  const prompt = parts.join("\n").trim();
+  const isTask = remote.modeId === "3";
+  const modeId = isTask ? "3" : "1";
+  const agentMode = isTask ? 1 : 2;
+  const conversationMode = isTask ? 2 : 1;
+  let reasoningEffort = "4";
+  let needDeepThink = 0;
+  if (options.reasoningEffort !== void 0) {
+    const selected = String(options.reasoningEffort);
+    if (!remote.reasoning?.efforts.some((item) => item.id === selected)) {
+      throw new LlmError21("\u8C46\u5305\uFF1A\u8BE5\u6A21\u578B\u672A\u58F0\u660E\u6240\u9009\u601D\u8003\u6863\u4F4D " + selected, "UNSUPPORTED_REASONING_EFFORT");
+    }
+    reasoningEffort = selected;
+    needDeepThink = isTask ? 10001 : 3;
+  }
+  return JSON.stringify({
+    client_meta: {
+      local_conversation_id: "local_" + String(Date.now()),
+      conversation_id: "",
+      bot_id: DOUBAO_BOT_ID,
+      last_section_id: "",
+      last_message_index: null
+    },
+    messages: [{
+      local_message_id: "msg_" + String(Date.now()),
+      content_block: [{
+        block_type: 1e4,
+        content: { text_block: { text: prompt, icon_url: "", icon_url_dark: "", summary: "" }, pc_event_block: "" },
+        block_id: "blk_0",
+        parent_id: "",
+        meta_info: [],
+        extra_info: {},
+        append_fields: []
+      }],
+      message_status: 0
+    }],
+    option: {
+      agent_mode: agentMode,
+      need_deep_think: needDeepThink,
+      scene_type: 0,
+      need_create_conversation: true,
+      conversation_init_option: { need_ack_conversation: true },
+      conversation_init_ext: { model_item_key: remote.key, reasoning_effort: reasoningEffort, mode_id: modeId },
+      sse_recv_event_options: { support_chunk_delta: true },
+      support_lazy_fetch_stream: true,
+      is_old_user: true,
+      recovery_option: { is_recovery: false, req_create_time_sec: Math.floor(Date.now() / 1e3), append_sse_event_scene: 0 },
+      model_config: { model_item_key: remote.key, model_extra_params: {}, reasoning_effort: reasoningEffort },
+      aggregate_params: {
+        mention_skill_list: "[]",
+        mention_plugin_list: "[]",
+        mention_ext: "[{}]",
+        conversation_mode: String(conversationMode),
+        mode_id: modeId,
+        model_item_key: remote.key,
+        agent_mode: String(agentMode),
+        reasoning_effort: reasoningEffort,
+        provider_id: ""
+      },
+      conversation_mode: conversationMode,
+      unique_key: "uk_" + String(Date.now())
+    },
+    user_context: [],
+    ext: {
+      agent_mode: String(agentMode),
+      use_deep_think: String(needDeepThink),
+      sub_conv_firstmet_type: "1",
+      collection_id: "",
+      is_finish: "1",
+      conversation_init_option: '{"need_ack_conversation":true}',
+      commerce_credit_config_enable: "0"
+    }
+  });
+}
+function doubaoContentBlocks(value, out = []) {
+  if (Array.isArray(value)) {
+    for (const item of value) doubaoContentBlocks(item, out);
+    return out;
+  }
+  if (typeof value !== "object" || value === null) return out;
+  const record = value;
+  if (record.block_type === 1e4 || record.block_type === 10040) {
+    out.push(record);
+    return out;
+  }
+  for (const child of Object.values(record)) doubaoContentBlocks(child, out);
+  return out;
+}
+function doubaoBlockId(value) {
+  if ((typeof value === "string" || typeof value === "number") && String(value) !== "" && String(value) !== "0") return String(value);
+  return void 0;
+}
+var DoubaoTextTracker = class {
+  thinkingHeaders = /* @__PURE__ */ new Set();
+  blocks = /* @__PURE__ */ new Map();
+  owners = /* @__PURE__ */ new Map();
+  upstreamText = /* @__PURE__ */ new Map();
+  dsmlFix = createDsmlMarkerNormalizer();
+  reasoningFix = createDsmlMarkerNormalizer();
+  hasAnswerText = false;
+  /** 只收到思考、没有正文（issue #150 第 4 条：这也算「有内容」，不得判空重发）。 */
+  hasReasoningText = false;
+  current = { kind: "text" };
+  /**
+   * ★★★ **判据：必须有正文**（2026-11-23 四改，对抗审计打了 P0）。
+   *
+   * ## 我上一版把它改成「思考也算内容」，那是**错的**
+   *
+   * 实测后果：reasoning-only 响应被当作**成功**交给宿主，而宿主对「只有 reasoning 块、
+   * 没有 text 块」的 assistant 消息判为 **无答复** ⇒ 用户看到**零输出**，
+   * 而且**不报错、不重试**。比原来的「判空重发」更糟：后者至少还有错误可看。
+   *
+   * ## 但原来的「判空重发」也是真缺陷
+   *
+   * 它会让 `stream()` 认为这个账号不行、换下一个账号重发（实测 2 账号 ⇒ 2 次带满思考
+   * 正文的请求）⇒ 白烧额度。
+   *
+   * ## 正解（本版）
+   *
+   * **保留「必须有正文」这个判据**（不把半个响应当成功），但把失败码换成
+   * **不可重试**的那一类 ⇒ 既不会交给宿主一个空答复，也不会逐账号重发。
+   */
+  get hasAnswer() {
+    return this.hasAnswerText;
+  }
+  /** 是否收到了思考（只用于把错误文案说清楚，不参与「有没有答复」的判定）。 */
+  get hasReasoning() {
+    return this.hasReasoningText;
+  }
+  push(frame) {
+    if (frame.event !== "STREAM_MSG_NOTIFY" && frame.event !== "FULL_MSG_NOTIFY" && frame.event !== "STREAM_CHUNK" && frame.event !== "CHUNK_DELTA") return [];
+    let payload;
+    try {
+      payload = JSON.parse(frame.data);
+    } catch {
+      return [];
+    }
+    if (typeof payload !== "object" || payload === null) return [];
+    const record = payload;
+    const out = [];
+    if (frame.event === "STREAM_MSG_NOTIFY" || frame.event === "FULL_MSG_NOTIFY") {
+      const message2 = typeof record.message === "object" && record.message !== null ? record.message : record;
+      if (String(message2.user_type) === "1" || message2.role === "user") return out;
+      this.pushBlocks(doubaoContentBlocks(message2.content ?? record.content), true, out);
+    } else if (frame.event === "STREAM_CHUNK") {
+      const operations = Array.isArray(record.patch_op) ? record.patch_op : [];
+      for (const operation of operations) {
+        if (typeof operation !== "object" || operation === null) continue;
+        const op = operation;
+        if (String(op.patch_object) === "111") continue;
+        this.pushBlocks(doubaoContentBlocks(op.patch_value), false, out);
+      }
+    } else if (typeof record.text === "string" && record.text.length > 0) {
+      this.append(this.current.kind, record.text, this.current.id, out);
+    }
+    return out;
+  }
+  flush(out) {
+    this.emit("text", this.dsmlFix.flush(), out);
+    this.emit("reasoning", this.reasoningFix.flush(), out);
+  }
+  *finish() {
+    for (const block of this.blocks.values()) {
+      yield { type: "block-end", index: block.index, block: { type: block.type, text: block.text } };
+    }
+  }
+  pushBlocks(blocks, snapshot, out) {
+    for (const block of blocks) {
+      const id = doubaoBlockId(block.block_id);
+      if (block.block_type === 10040 && id !== void 0) this.thinkingHeaders.add(id);
+    }
+    for (const block of blocks) {
+      if (block.block_type !== 1e4) continue;
+      const id = doubaoBlockId(block.block_id);
+      const parentId = doubaoBlockId(block.parent_id);
+      const previousOwner = id === void 0 ? void 0 : this.owners.get(id);
+      const kind = parentId !== void 0 && this.thinkingHeaders.has(parentId) ? "reasoning" : previousOwner ?? "text";
+      if (id !== void 0) this.owners.set(id, kind);
+      const content = block.content;
+      const text = content?.text_block?.text;
+      if (typeof text !== "string") continue;
+      if (text.length === 0) {
+        if (id !== void 0 && previousOwner === void 0) this.current = { kind, id };
+        continue;
+      }
+      let delta = text;
+      if (id !== void 0) {
+        const previous = this.upstreamText.get(id) ?? "";
+        if (text.startsWith(previous)) delta = text.slice(previous.length);
+        else if (snapshot || previous.startsWith(text)) continue;
+      }
+      if (delta.length === 0) continue;
+      this.current = { kind, ...id === void 0 ? {} : { id } };
+      this.append(kind, delta, id, out);
+    }
+  }
+  append(kind, text, id, out) {
+    if (text.length === 0) return;
+    if (kind === "text") this.hasAnswerText = true;
+    else this.hasReasoningText = true;
+    if (id !== void 0) this.upstreamText.set(id, (this.upstreamText.get(id) ?? "") + text);
+    const normalizer = kind === "text" ? this.dsmlFix : this.reasoningFix;
+    this.emit(kind, normalizer.push(text), out);
+  }
+  emit(kind, text, out) {
+    if (text.length === 0) return;
+    let block = this.blocks.get(kind);
+    if (block === void 0) {
+      block = { index: this.blocks.size, type: kind, text: "" };
+      this.blocks.set(kind, block);
+      out.push({ type: "block-start", index: block.index, blockType: kind });
+    }
+    block.text += text;
+    out.push(kind === "reasoning" ? { type: "reasoning-delta", index: block.index, text } : { type: "text-delta", index: block.index, text });
+  }
+};
+var DoubaoAdapter = class extends LlmAdapter13 {
+  options;
+  catalogGate;
+  catalog;
+  remoteModels = DOUBAO_FALLBACK_MODELS;
+  remoteModelsLoaded = false;
+  constructor(options) {
+    super();
+    this.options = options;
+    this.catalogGate = new RemoteCatalogGate(
+      options.onCatalogLoaded === void 0 ? {} : { onLoaded: options.onCatalogLoaded }
+    );
+    this.catalog = createModelCatalog(
+      options.accountPool === void 0 ? {} : { accountPool: options.accountPool },
+      {
+        product: { id: DOUBAO_PROVIDER },
+        // 磁盘的展示条目不含 modeId，不能用它声明随后无法路由的档位。
+        diskCache: false,
+        loadCatalog: () => this.loadCatalogEntries(),
+        syncCatalog: () => this.syncCatalogEntries(),
+        unknownModelInputModalities: () => ["text"],
+        refresh: () => this.refreshRemoteModels(true)
+      }
+    );
+  }
+  providerInfo(provider) {
+    const id = typeof provider === "string" && provider.length > 0 ? provider : DOUBAO_PROVIDER;
+    return { id, name: DOUBAO_DISPLAY_NAME };
+  }
+  /** 远端目录读取（失败时回退到实测快照，不让冷启动目录为空）。 */
+  async refreshRemoteModels(force = false) {
+    if (!force && this.remoteModelsLoaded) return;
+    if (force) this.catalogGate.reset();
+    await this.catalogGate.run(async () => {
+      const slots = await this.options.slots();
+      const slot2 = slots.find((item) => typeof item.credential.cookie === "string" && item.credential.cookie.length > 0);
+      if (slot2 === void 0) return false;
+      const cookie = slot2.credential.cookie;
+      if (typeof cookie !== "string" || cookie.length === 0) return false;
+      const url = DOUBAO_WEB_BASE_URL + DOUBAO_BRIEF_LIST_PATH + "?" + doubaoQuery(slot2.credential).toString();
+      try {
+        const response = await (this.options.fetchImpl ?? fetch)(url, {
+          method: "POST",
+          headers: doubaoHeaders(cookie, { "Content-Type": "application/json" }),
+          body: JSON.stringify({ bot_id: DOUBAO_BOT_ID, language_code: "zh" }),
+          signal: AbortSignal.timeout(DOUBAO_HTTP_TIMEOUT_MS)
+        });
+        if (!response.ok) return false;
+        const envelope = parseDoubaoEnvelope(await response.text());
+        if (envelope === void 0 || typeof envelope.code === "number" && envelope.code !== 0) return false;
+        const models = doubaoRemoteModels(envelope.data);
+        if (models.length === 0) return false;
+        this.remoteModels = models;
+        this.remoteModelsLoaded = true;
+        return true;
+      } catch {
+        this.options.warn?.("[doubao] \u6A21\u578B\u76EE\u5F55\u8BFB\u53D6\u5931\u8D25\uFF0C\u4F7F\u7528\u5FEB\u7167");
+        return false;
+      }
+    });
+  }
+  async refresh() {
+    await this.catalog.refresh?.();
+  }
+  listAllModels() {
+    return this.catalog.listAllModels();
+  }
+  async listModels(provider) {
+    return this.catalog.listModels(provider);
+  }
+  async modelForCall(model, signal) {
+    signal?.throwIfAborted();
+    await this.refreshRemoteModels();
+    signal?.throwIfAborted();
+    return resolveRemoteModel(model, this.remoteModels);
+  }
+  resolvedModel(provider, model) {
+    const { reasoning } = this.toCatalogEntry(model);
+    return {
+      provider,
+      id: model.key,
+      name: model.name,
+      inputModalities: ["text"],
+      ...reasoning === void 0 ? {} : { reasoning }
+    };
+  }
+  async resolveModel(provider, model, signal) {
+    return this.resolvedModel(provider, await this.modelForCall(model, signal));
+  }
+  async prepareCall(provider, model, signal) {
+    const remote = await this.modelForCall(model, signal);
+    return {
+      model: this.resolvedModel(provider, remote),
+      stream: (options) => this.streamWithModel(options, remote)
+    };
+  }
+  async *stream(options) {
+    yield* this.streamWithModel(options, await this.modelForCall(options.model, options.signal));
+  }
+  async *streamWithModel(options, remote) {
+    options.signal?.throwIfAborted();
+    const slots = await this.options.slots();
+    if (slots.length === 0) {
+      throw new LlmError21("\u8C46\u5305\uFF1A\u8FD8\u6CA1\u6709\u53EF\u7528\u7684\u8D26\u53F7\u3002\u8BF7\u5728 Jet Hub \u7684\u8C46\u5305\u5361\u7247\u4E0A\u626B\u7801\u767B\u5F55\u3002", "MISSING_CREDENTIAL");
+    }
+    const body = buildDoubaoChatBody(options, remote);
+    let lastError;
+    for (const slot2 of slots) {
+      options.signal?.throwIfAborted();
+      if (typeof slot2.credential.cookie !== "string" || slot2.credential.cookie.length === 0) continue;
+      const url = DOUBAO_WEB_BASE_URL + DOUBAO_CHAT_PATH + "?" + doubaoQuery(slot2.credential).toString();
+      let raw;
+      try {
+        const chatSignal = options.signal === void 0 ? AbortSignal.timeout(DOUBAO_CHAT_TIMEOUT_MS) : AbortSignal.any([options.signal, AbortSignal.timeout(DOUBAO_CHAT_TIMEOUT_MS)]);
+        const response = await (this.options.fetchImpl ?? fetch)(url, {
+          method: "POST",
+          headers: doubaoHeaders(slot2.credential.cookie, { "Content-Type": "application/json" }),
+          body,
+          signal: chatSignal
+        });
+        if (!response.ok) {
+          const bodyText = await response.text().catch(() => "");
+          const upstreamReason = doubaoUpstreamReasonOf(bodyText);
+          const suffix = upstreamReason.length > 0 ? `\uFF1A${upstreamReason}` : "";
+          const code = response.status === 429 ? "RATE_LIMIT" : response.status === 401 || response.status === 403 ? "AUTH" : "SERVER";
+          lastError = new LlmError21(
+            `\u8C46\u5305\uFF1A\u4E0A\u6E38\u8FD4\u56DE HTTP ${response.status}${suffix}`,
+            code,
+            { status: response.status }
+          );
+          continue;
+        }
+        raw = await response.text();
+      } catch (error) {
+        options.signal?.throwIfAborted();
+        if (error instanceof Error && error.name === "TimeoutError") {
+          throw new LlmError21(
+            `\u8C46\u5305\uFF1A\u7B49\u5F85\u4E0A\u6E38\u5BF9\u8BDD\u54CD\u5E94\u8D85\u65F6\uFF08${Math.round(DOUBAO_CHAT_TIMEOUT_MS / 1e3)} \u79D2\u65E0\u5B8C\u6574\u54CD\u5E94\uFF09`,
+            "TIMEOUT"
+          );
+        }
+        lastError = new LlmError21("\u8C46\u5305\uFF1A\u8BFB\u53D6\u4E0A\u6E38\u5BF9\u8BDD\u54CD\u5E94\u5931\u8D25", "SERVER");
+        continue;
+      }
+      const frames = parseDoubaoFrames(raw);
+      const tracker = new DoubaoTextTracker();
+      const chunks = [];
+      for (const frame of frames) {
+        const streamError = doubaoStreamErrorOf(frame.data);
+        if (streamError !== void 0) {
+          const detail = streamError.message.length > 0 ? `\uFF1A${streamError.message}` : "";
+          throw new LlmError21(`\u8C46\u5305\uFF1A\u4E0A\u6E38\u9519\u8BEF ${streamError.code}${detail}`, "SERVER");
+        }
+        for (const chunk of tracker.push(frame)) chunks.push(chunk);
+      }
+      tracker.flush(chunks);
+      if (tracker.hasAnswer) {
+        for (const chunk of chunks) yield chunk;
+        for (const chunk of tracker.finish()) yield chunk;
+        yield { type: "finish", reason: { kind: "stop" } };
+        return;
+      }
+      lastError = tracker.hasReasoning ? new LlmError21(
+        "\u8C46\u5305\uFF1A\u4E0A\u6E38\u53EA\u8FD4\u56DE\u4E86\u601D\u8003\u5185\u5BB9\u3001\u6CA1\u6709\u6B63\u6587\uFF0C\u672C\u6761\u4E0D\u53EF\u4EA4\u4ED8\uFF08\u91CD\u53D1\u4E0D\u4F1A\u53D8\u597D\uFF0C\u8BF7\u6362\u4E2A\u95EE\u6CD5\u6216\u7A0D\u540E\u518D\u8BD5\uFF09",
+        "INVALID_REQUEST"
+      ) : new LlmError21("\u8C46\u5305\uFF1A\u4E0A\u6E38\u672A\u8FD4\u56DE\u6B63\u6587", "EMPTY_RESPONSE");
+    }
+    throw lastError ?? new LlmError21("\u8C46\u5305\uFF1A\u6240\u6709\u8D26\u53F7\u5747\u4E0D\u53EF\u7528", "SERVER");
+  }
+  toCatalogEntry(model) {
+    const suffix = doubaoTagSuffix(model.tags);
+    return {
+      id: model.key,
+      name: model.name + (suffix === void 0 ? "" : " \xB7 " + suffix),
+      bareName: model.name,
+      inputModalities: ["text"],
+      ...model.reasoning === void 0 ? {} : {
+        reasoning: {
+          efforts: model.reasoning.efforts.map((effort) => ({
+            id: effort.id,
+            name: effort.name
+          }))
+        }
+      }
+    };
+  }
+  async loadCatalogEntries() {
+    await this.refreshRemoteModels();
+    return this.remoteModels.map((m) => this.toCatalogEntry(m));
+  }
+  syncCatalogEntries() {
+    return this.remoteModels.map((m) => this.toCatalogEntry(m));
+  }
+};
+function registerDoubaoLlm(ctx, options) {
+  const adapter = new DoubaoAdapter(options);
+  registerAdapterIdempotent(ctx.llm, [DOUBAO_PROVIDER], adapter);
+  return adapter;
+}
+
+// vendor/channel-pack/src/gemini-sigstore.ts
+import { createHash as createHash12 } from "node:crypto";
 import { existsSync as existsSync12, mkdirSync as mkdirSync9, readFileSync as readFileSync11, renameSync as renameSync9, writeFileSync as writeFileSync10 } from "node:fs";
 import { dirname as dirname2, join as join11 } from "node:path";
 var GEMINI_SIG_FILE = "gemini-sigs.json";
@@ -70572,7 +71343,7 @@ var GEMINI_SIG_MAX_ENTRIES = 2e3;
 var SIG_KEY_BODY_LIMIT = 512;
 function geminiSigKey(role, text) {
   const body = text.length > SIG_KEY_BODY_LIMIT ? text.slice(0, SIG_KEY_BODY_LIMIT) : text;
-  return createHash11("sha256").update(`${role}\0${body}`, "utf8").digest("hex").slice(0, 16);
+  return createHash12("sha256").update(`${role}\0${body}`, "utf8").digest("hex").slice(0, 16);
 }
 function geminiToolSigKey(name2, argsJson) {
   return geminiSigKey(`tool:${name2}`, argsJson);
@@ -70717,7 +71488,7 @@ function createGeminiSigStore(ctx) {
 }
 
 // vendor/channel-pack/src/officeace-adapter.ts
-import { LlmAdapter as LlmAdapter13 } from "@deepseek-ai/dsh-llm";
+import { LlmAdapter as LlmAdapter14 } from "@deepseek-ai/dsh-llm";
 
 // vendor/channel-pack/src/officeace-auth.ts
 var officeace_auth_exports = {};
@@ -70745,7 +71516,7 @@ __export(officeace_auth_exports, {
   refreshStoredCredential: () => refreshStoredCredential,
   startLogin: () => startLogin
 });
-import { createHash as createHash12, createHmac as createHmac2, randomBytes as randomBytes16, webcrypto } from "node:crypto";
+import { createHash as createHash13, createHmac as createHmac2, randomBytes as randomBytes16, webcrypto } from "node:crypto";
 import { execFile as execFile3, execFileSync as execFileSync3 } from "node:child_process";
 import * as fs from "node:fs";
 import * as https from "node:https";
@@ -70839,7 +71610,7 @@ async function startLogin() {
     throw new Error("\u534E\u4E3A\u4E91\u672A\u8FD4\u56DE state");
   }
   const codeVerifier = b64(randomBytes16(32));
-  const codeChallenge = createHash12("sha256").update(codeVerifier).digest("base64url");
+  const codeChallenge = createHash13("sha256").update(codeVerifier).digest("base64url");
   const { privateJwk, publicJwk } = await generateDpopKeyPair2();
   const params = new URLSearchParams({
     client_id: CLIENT_ID2,
@@ -70890,9 +71661,9 @@ function signHuaweiRequest(method, url, headers, bodyText, accessKey, secretKey)
   let canonicalHeaders = "";
   for (const h of signedHeaders) canonicalHeaders += `${h}:${lower[h]}
 `;
-  const bodyHash = method === "PUT" || method === "PATCH" || method === "POST" ? createHash12("sha256").update(bodyText).digest("hex") : createHash12("sha256").update("").digest("hex");
+  const bodyHash = method === "PUT" || method === "PATCH" || method === "POST" ? createHash13("sha256").update(bodyText).digest("hex") : createHash13("sha256").update("").digest("hex");
   const canonicalRequest = [method, canonicalUri, canonicalQuery, canonicalHeaders, signedHeaders.join(";"), bodyHash].join("\n");
-  const stringToSign = ["SDK-HMAC-SHA256", xdate, createHash12("sha256").update(canonicalRequest).digest("hex")].join("\n");
+  const stringToSign = ["SDK-HMAC-SHA256", xdate, createHash13("sha256").update(canonicalRequest).digest("hex")].join("\n");
   const sig2 = createHmac2("sha256", secretKey).update(stringToSign).digest("hex");
   return {
     ...headers,
@@ -71302,7 +72073,7 @@ async function signAndRequest(url, credential, method, body) {
   let canonicalHeaders = "";
   for (const h of signedHeaders) canonicalHeaders += `${h}:${lower[h]}
 `;
-  const payloadHash = createHash12("sha256").update(body ?? "", "utf8").digest("hex");
+  const payloadHash = createHash13("sha256").update(body ?? "", "utf8").digest("hex");
   const canonicalRequest = [
     method,
     canonicalUri,
@@ -71312,7 +72083,7 @@ async function signAndRequest(url, credential, method, body) {
     payloadHash
   ].join("\n");
   const scope = `${xdate.slice(0, 8)}/${region}/${service}`;
-  const stringToSign = ["V11-HMAC-SHA256", xdate, scope, createHash12("sha256").update(canonicalRequest).digest("hex")].join("\n");
+  const stringToSign = ["V11-HMAC-SHA256", xdate, scope, createHash13("sha256").update(canonicalRequest).digest("hex")].join("\n");
   const u1 = createHmac2("sha256", credential.access).update(credential.secret).digest();
   const derivedKey = createHmac2("sha256", u1).update(Buffer.concat([Buffer.from(scope, "utf8"), Buffer.from([1])])).digest().subarray(0, 32).toString("hex");
   const signature = createHmac2("sha256", Buffer.from(derivedKey, "utf8")).update(stringToSign).digest("hex");
@@ -71621,7 +72392,7 @@ function buildDsmlSystemPrompt2(tools) {
 }
 
 // vendor/channel-pack/src/officeace-credential-health.ts
-import { createHash as createHash13 } from "node:crypto";
+import { createHash as createHash14 } from "node:crypto";
 var DSH_OFFICEACE_BREAKER_MINUTES = "DSH_OFFICEACE_BREAKER_MINUTES";
 var OFFICEACE_BREAKER_DEFAULT_MINUTES = 10;
 var OFFICEACE_BREAKER_THRESHOLD = 2;
@@ -71639,7 +72410,7 @@ function officeaceCredentialFingerprint(credential) {
   const key = typeof credential?.modelAppKey === "string" ? credential.modelAppKey : "";
   const secret = typeof credential?.modelAppSecret === "string" ? credential.modelAppSecret : "";
   if (key.length === 0 || secret.length === 0) return "";
-  return createHash13("sha256").update(`${key}\0${secret}`).digest("hex").slice(0, 16);
+  return createHash14("sha256").update(`${key}\0${secret}`).digest("hex").slice(0, 16);
 }
 var rejections = /* @__PURE__ */ new Map();
 function noteOfficeaceRejection(credential, body = "", now = Date.now(), env = process.env) {
@@ -71695,7 +72466,7 @@ function maasBaseUrlOf(credential) {
 function isMultimodalModel(model) {
   return OFFICEACE_MODELS.some((m) => m.id === model && m.multimodal === true);
 }
-var OfficeAceAdapter = class extends LlmAdapter13 {
+var OfficeAceAdapter = class extends LlmAdapter14 {
   constructor(options = {}) {
     super();
     this.options = options;
@@ -72132,7 +72903,7 @@ function officeaceLockedError(reason, windowMs) {
 }
 
 // vendor/channel-pack/src/opencode-adapter.ts
-import { LlmAdapter as LlmAdapter14, LlmError as LlmError21, ReasoningEffortId as ReasoningEffortId16 } from "@deepseek-ai/dsh-llm";
+import { LlmAdapter as LlmAdapter15, LlmError as LlmError22, ReasoningEffortId as ReasoningEffortId16 } from "@deepseek-ai/dsh-llm";
 
 // vendor/channel-pack/src/opencode-messages.ts
 var FREE_LANE_GATE_TOOLS = ["bash", "read"];
@@ -72420,7 +73191,7 @@ function opencodeRetryAfterMs(kind, retryAfterMs, attempt) {
   if (kind === "auth") return RATE_LIMIT_BASE_MS;
   return Math.min(RATE_LIMIT_BASE_MS * 2 ** Math.max(0, attempt - 1), RETRY_AFTER_CAP_MS);
 }
-var OpencodeAdapter = class extends LlmAdapter14 {
+var OpencodeAdapter = class extends LlmAdapter15 {
   constructor(options) {
     super();
     this.options = options;
@@ -72460,7 +73231,7 @@ var OpencodeAdapter = class extends LlmAdapter14 {
       provider: OPENCODE.id,
       id: m.id,
       name: m.name,
-      // ⚠️ 模态以**远端能力表**为准，不再一律 text（用户报障
+      // ⚠️ 模态以**远端能力表**为准，不再一律 text（现场反馈
       // 「space-bunny-free 发图提示不支持」：该模型实测接受图片，
       // 而我们硬编码 ['text'] 让 DSH 在本地就把图投影成了文字占位符）。
       // ⚠️ 能力表拿不到时**保守回退 text**（`inputModalitiesOf` 的实现）——
@@ -72514,10 +73285,10 @@ var OpencodeAdapter = class extends LlmAdapter14 {
   async *stream(options) {
     const slots = await this.options.identitySlots();
     if (slots.length === 0) {
-      throw new LlmError21("opencode: \u6CA1\u6709\u53EF\u7528\u901A\u9053", "MISSING_CREDENTIAL");
+      throw new LlmError22("opencode: \u6CA1\u6709\u53EF\u7528\u901A\u9053", "MISSING_CREDENTIAL");
     }
     if (pickSlot(slots, options.model, /* @__PURE__ */ new Set()) === void 0) {
-      throw new LlmError21(
+      throw new LlmError22(
         `opencode: \u6A21\u578B "${options.model}" \u9700\u8981 API key \u8D26\u53F7\u901A\u9053\uFF08\u533F\u540D\u901A\u9053\u53EA\u652F\u6301\u514D\u8D39\u6A21\u578B\uFF09\uFF0C\u8BF7\u5148\u5728 Channel Pack \u7684 OpenCode \u9762\u677F\u6DFB\u52A0\u4E00\u4E2A\u8D26\u53F7`,
         "MISSING_CREDENTIAL"
       );
@@ -72527,7 +73298,7 @@ var OpencodeAdapter = class extends LlmAdapter14 {
     for (; ; ) {
       const slot2 = pickSlot(slots, options.model, tried);
       if (slot2 === void 0) {
-        throw new LlmError21(
+        throw new LlmError22(
           `opencode: \u6240\u6709\u901A\u9053\u5BF9\u8BE5\u6A21\u578B\u5747\u53D7\u9650${limited.length > 0 ? `\uFF08${limited.join("\u3001")}\uFF09` : ""}`,
           "QUOTA_EXCEEDED"
         );
@@ -72543,13 +73314,13 @@ var OpencodeAdapter = class extends LlmAdapter14 {
         return;
       } catch (error) {
         if (delivered) throw error;
-        if (error instanceof LlmError21 && error.code === "QUOTA_EXCEEDED") throw error;
+        if (error instanceof LlmError22 && error.code === "QUOTA_EXCEEDED") throw error;
         const info = classifyOpencodeFailure(error);
         if (info.kind === "free_tier") {
           this.options.warn?.(
             `opencode: \u514D\u8D39\u901A\u9053\u88AB FreeTierError \u62D2\u7EDD \u2014\u2014 \u68C0\u67E5 session id \u5F62\u72B6\uFF08\u5E94\u4E3A ses_ + 12hex + 14base62\uFF09\uFF1A${info.detail}`
           );
-          throw new LlmError21(
+          throw new LlmError22(
             `opencode: \u514D\u8D39\u901A\u9053\u88AB\u4E0A\u6E38\u62D2\u7EDD\uFF08FreeTierError\uFF09\u3002\u8BE5\u9519\u8BEF\u7531\u8BF7\u6C42\u5F62\u72B6\u89E6\u53D1\uFF08session id \u5F62\u72B6\u4E0D\u5BF9\u65F6\u51FA\u73B0\uFF09\uFF0C\u6362 API key \u6216\u6362\u51FA\u53E3\u90FD\u65E0\u6548\u3002`,
             "AUTH",
             { status: 403 }
@@ -72593,13 +73364,13 @@ var OpencodeAdapter = class extends LlmAdapter14 {
     if (refs.size === 0) return void 0;
     const capabilities = getOpencodeCapabilitiesSync();
     if (!supportsOpencodeImage(capabilities.find((c) => c.id === model))) {
-      throw new LlmError21(
+      throw new LlmError22(
         `opencode: \u6A21\u578B "${model}" \u4E0D\u652F\u6301\u56FE\u7247\u8F93\u5165\uFF08\u80FD\u529B\u4EE5\u8FDC\u7AEF models.dev \u4E3A\u51C6\uFF09`,
         "UNSUPPORTED_CONTENT"
       );
     }
     if (this.options.readImage === void 0) {
-      throw new LlmError21("opencode: \u56FE\u7247\u8F93\u5165\u9700\u8981\u9644\u4EF6\u670D\u52A1", "UNSUPPORTED_CONTENT");
+      throw new LlmError22("opencode: \u56FE\u7247\u8F93\u5165\u9700\u8981\u9644\u4EF6\u670D\u52A1", "UNSUPPORTED_CONTENT");
     }
     const readImage = this.options.readImage;
     const out = /* @__PURE__ */ new Map();
@@ -72644,7 +73415,7 @@ var OpencodeAdapter = class extends LlmAdapter14 {
     if (!response.ok) {
       const text = await response.text().catch(() => "");
       const retryAfterMs = retryAfterMsFromResponse(response.headers);
-      throw new LlmError21(
+      throw new LlmError22(
         `opencode: HTTP ${response.status} \u2014 ${text.slice(0, 300)}`,
         httpErrorCode4(response.status),
         {
@@ -72932,7 +73703,7 @@ function apply(ctx, config = {}) {
       modelId ?? ""
     );
     if (limited === void 0) return;
-    throw new LlmError22(
+    throw new LlmError23(
       `${product.displayName}\uFF1A\u6A21\u578B ${modelId} \u7684\u53EF\u7528\u8D26\u53F7\u5747\u5728\u9650\u6D41\u4E2D\uFF0C\u6700\u8FD1\u4E00\u4E2A\u5C06\u4E8E ${new Date(limited.resetAtMs).toLocaleString("zh-CN")} \u89E3\u7981\u3002\u53EF\u6539\u7528\u5176\u5B83 provider / \u6A21\u578B\uFF0C\u6216\u7B49\u5F85\u89E3\u7981\u540E\u518D\u8BD5\uFF08\u65E0\u9700\u91CD\u65B0\u767B\u5F55\uFF09\u3002`,
       "QUOTA_EXCEEDED"
     );
@@ -73002,7 +73773,7 @@ function apply(ctx, config = {}) {
         displayName: "WorkBuddy",
         modelId,
         // 免费模型跳过「锁定 + 临期积分」这道门（判据见 BuddyAdapter.isFreeModel）。
-        // 用户报障「账户可用却提示没有可用账号」正是缺了这一条：免费模型不扣积分，
+        // 现场反馈「账户可用却提示没有可用账号」正是缺了这一条：免费模型不扣积分，
         // 却被永久积分锁定拦下。
         isFreeModel: await workbuddyAdapter.isFreeModel(modelId)
       });
@@ -73715,7 +74486,7 @@ function apply(ctx, config = {}) {
     try {
       await refreshCatalogsOnce({
         adapters: modelAdapters,
-        // ⚠️ 闸门：**没配账号的渠道不刷**（2026-11-09 用户报障：未配 cline 账号，
+        // ⚠️ 闸门：**没配账号的渠道不刷**（2026-11-09 现场反馈：未配 cline 账号，
         // 却每 30 分钟刷「models.dev 拉取失败 / 无可用凭据」两条 warn）。
         // 判据是 `hasLoggedInAccount(provider)`；能力缺失时传 undefined ⇒ 照旧刷新。
         hasAccount: typeof pool.hasLoggedInAccount === "function" ? (provider) => hasCatalogAccount(provider) : void 0,
@@ -73834,7 +74605,7 @@ function apply(ctx, config = {}) {
       // ⚠️⚠️ **必须有超时**（真机事故 2026-10-02）：桌面版到 opencode.ai 的
       // fetch 可能**永不 settle**（与同源的 remote.session 故障都是宿主网络问题）。
       // 没有超时 → `loadOpencodeCatalog` 的 try/catch 永远走不到 →
-      // `listModels` 永不返回 → **模型列表与徽标同时空白**（用户报障）。
+      // `listModels` 永不返回 → **模型列表与徽标同时空白**（现场反馈）。
       // 有超时则超时后回退兜底表，UI 立刻可用（只是暂时看不到付费模型）。
       fetchRemoteCatalog: (slot2, signal) => fetch(`${OPENCODE.baseUrl}${OPENCODE.modelsPath}`, {
         headers: { authorization: `Bearer ${slot2.apiKey}` },
@@ -73887,6 +74658,30 @@ function apply(ctx, config = {}) {
     }
   };
   const accio = new AccioAuth(ctx, { fetcher: network.fetch });
+  const doubaoAdapter = registerDoubaoLlm(ctx, {
+    credentialRef: credentialRef18("DOUBAO_ACCOUNT"),
+    slots: async () => {
+      const entries = await pool.listAccounts("doubao");
+      const out = [];
+      for (const entry of entries) {
+        if (!entry.enabled) continue;
+        const resolved = await ctx.credentials.resolve(credentialRef18(entry.credentialRef));
+        if (!resolved) continue;
+        try {
+          const parsed = JSON.parse(resolved.value);
+          if (typeof parsed !== "object" || parsed === null || typeof parsed.cookie !== "string" || parsed.cookie.length === 0) continue;
+          out.push({ accountId: entry.id, credential: parsed });
+        } catch {
+        }
+      }
+      return out;
+    },
+    accountPool: pool,
+    onCatalogLoaded: () => {
+      broadcastCatalogChanged(ctx);
+    },
+    warn: (message2) => ctx.logger.warn(message2)
+  });
   const accioAdapter = registerAccioLlm(ctx, {
     // ⚠️ provider 实参用 ACCIO.id 而非字面量（同 minimax / gemini 的既有约定）。
     // ⚠️ `modelId` 必须透传：否则模型级限流标记被忽略（见 buddy 处说明）。
@@ -73995,6 +74790,7 @@ function apply(ctx, config = {}) {
     gemini: pruned(GEMINI.id, geminiAdapter),
     officeace: pruned(OFFICEACE.id, officeAceAdapter),
     accio: pruned(ACCIO.id, accioAdapter),
+    doubao: pruned("doubao", doubaoAdapter),
     zcode: pruned(ZCODE.id, zcodeAdapter),
     ...opencodeAdapter === void 0 ? {} : { opencode: pruned(OPENCODE.id, opencodeAdapter) }
   };
@@ -74028,20 +74824,27 @@ export {
   httpErrorCode as codeartsHttpErrorCode,
   isAuthError as codeartsIsAuthError,
   createChannelFetch,
+  createDsmlMarkerNormalizer,
   diffChangedProviders as diffChangedProvidersForTest,
+  doubaoDerivedDeviceIdentity,
+  doubaoDeviceIdentityOf,
   findClineModelsDevEntry,
+  fixDsmlMarkers,
   httpErrorCodeForZcode,
   inject,
+  isAutoCheckinExcluded,
   makeReadImage,
   makeReadImageRequest,
   maybeClaimBonus,
   msUntilNextUtc8Midnight,
   name,
+  parseDoubaoCredential,
   parseWindowsProxy,
   refreshCatalogsOnce,
   rewriteTencentContentFingerprints,
   sanitizeToolSchema as sanitizeToolSchemaForTest,
   serializeTraeMessagesForTest,
+  sessionIdFromCookie,
   shouldRefreshNow,
   stripClineSnapshotSuffix,
   withCallerSystem,

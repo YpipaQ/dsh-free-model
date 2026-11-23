@@ -633,7 +633,7 @@ function promotionActiveNow(item: Record<string, unknown>, now: Date): boolean {
  *
  * ⚠️ **`factor: 0` 是「免费」而非「活动已结束」**：实测 `hy4-preview` 的夜间活动
  * 是 `{discountedCredits: "0x", displayMode: "replace", factor: 0}` —— 它**真的免费**。
- * 早期实现把 `0x` 当哨兵丢弃，于是「夜间免费」永远不显示（用户报障
+ * 早期实现把 `0x` 当哨兵丢弃，于是「夜间免费」永远不显示（现场反馈
  * 「hy4 preview 夜间 0，现在显示 0.29」）。**真正的「已结束」由有效期表达**。
  * 作为防御：**无任何时间窗口**的 `factor: 0` 仍按「已结束占位」跳过 ——
  * 免费额度必然是限时的，没有窗口的 `0x` 更可能是遗留占位。

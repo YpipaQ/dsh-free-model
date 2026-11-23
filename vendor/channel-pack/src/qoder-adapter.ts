@@ -11,7 +11,7 @@
  * | **加密（本适配器默认）** | `api2.qoder.sh/algo/api/v2/service/pro/sse/agent_chat_generation?Encode=1` | **目录 key**（`qfmodel` / `dmodel`） | 客户端真实链路；body 由 `src/qoder-wasm.ts` 加密；能拿到 Qwen3.8 系列 |
  * | 公开 | `api2-v2.qoder.sh/model/v1/chat/completions` | 通用名（`qwen-flash`） | 标准 OpenAI；但目录 key 一律 `Unsupported model` |
  *
- * **真实缺陷**（用户报障）：「向 qwen3.8-flash 发消息后没收到回复就终止」。
+ * **真实缺陷**（现场反馈）：「向 qwen3.8-flash 发消息后没收到回复就终止」。
  * 根因是早期把**目录 key 发给了公开端点** → `invalid_model_error`，
  * 而错误帧又被解析器静默吞掉。
  *
@@ -204,7 +204,7 @@ function queueInfoOf(error: ModelQueuedError): QoderQueueInfo {
  * `description` / `parameters` **缺省时该键不出现**（不是填空串/空对象）。
  *
  * ⚠️ 这是 `options.tools` 的**唯一出口**。适配器若不下发它，模型在 wire 上
- * 看不到任何函数定义，只能用正文里的 XML 文本臆造工具调用 —— 用户报障
+ * 看不到任何函数定义，只能用正文里的 XML 文本臆造工具调用 —— 现场反馈
  * 「qwen3.8-flash 执行任务出现任务调用 xml 泄露任务终止」的根因。
  *
  * @param tools - DSH 的 `GenerateOptions.tools`（可能缺席）。
@@ -250,7 +250,7 @@ function qoderContentText(content: unknown): string {
 /**
  * 把 wire 消息的 content 数组**逐字段搬运**成多模态 parts。
  *
- * ## 为什么必须保留数组（真实缺陷，用户报障）
+ * ## 为什么必须保留数组（真实缺陷，现场反馈）
  *
  * 「给 qodercn 的 qwen3.8-flash 发送图片，模型说没读到图片」。
  *
@@ -348,7 +348,7 @@ export function buildQoderHistory(messages: readonly QoderWireMessage[]): QoderI
     //
     // ⚠️ 判空必须把**图片**算作内容：`parts` 为非空数组（含 image_url）时
     // 即便 `qoderContentText` 结果为空串也不能丢弃 —— 否则「只发一张图、
-    // 不带文字」的消息会被整条吃掉（用户报障场景之一）。
+    // 不带文字」的消息会被整条吃掉（现场反馈场景之一）。
     const isEmpty = parts === undefined
       ? content.length === 0
       : (content as Array<Record<string, unknown>>).length === 0
@@ -396,7 +396,7 @@ export interface QoderAdapterOptions {
    * ⚠️ 为什么需要这个钩子：`uid` 是后加的字段，**在此之前的旧凭据里没有它**，
    * 而 `generate_runtime_auth_fields` 依赖它派生 `encrypt_user_info`。
    * 缺 uid 时 WASM 产出**签名无效**的请求 → 服务端回
-   * `Signature invalid (101)`（真实缺陷，用户报障）。
+   * `Signature invalid (101)`（真实缺陷，现场反馈）。
    *
    * 传入旧凭据，实现应调一次 userinfo 取 `id`、**回写凭据存储**，
    * 并返回补好 uid 的新凭据；无法补齐时返回 undefined。
@@ -523,7 +523,7 @@ export class QoderAdapter extends LlmAdapter {
    *
    * 设置页必须渲染被关闭的模型（否则用户无法重新打开），而 `listModels` 会按
    * 黑名单过滤掉它们 —— RPC 层只能凭裸 id 补回，展示名与倍率随之丢失
-   * （用户报障：「关闭的就没有显示倍率」）。详见 `model.list` 端点的注释。
+   * （现场反馈：「关闭的就没有显示倍率」）。详见 `model.list` 端点的注释。
    */
   listAllModels(): readonly { id: string; name: string }[] {
     return this.product.fallbackModels.map((model) => ({ id: model.id, name: qoderDisplayName(model) }))
@@ -557,7 +557,7 @@ export class QoderAdapter extends LlmAdapter {
    * ⚠️ **`reasoning` 是「思考强度」选择器出现在模型菜单里的唯一入口**
    * （composer 读 `resolveModel().reasoning`）。此前本适配器**只声明了
    * `context`，从不声明 `reasoning`** → 中国版/国际版全都看不到档位选择器，
-   * 尽管目录早已下发 `thinking_config`（用户报障「qoder中国版可以设置思考档位，
+   * 尽管目录早已下发 `thinking_config`（现场反馈「qoder中国版可以设置思考档位，
    * 我们应该按照他的设置给出可设置的档位选择」）。
    */
   async resolveModel(provider: string, model: string, _signal?: AbortSignal): Promise<LlmResolvedModelInfo> {
@@ -661,7 +661,7 @@ export class QoderAdapter extends LlmAdapter {
     // 2. 补齐 **uid**（加密推理必需）。
     //
     // ⚠️ `uid` 是后加字段，旧凭据里没有；缺它时 WASM 会产出**签名无效**的
-    // 请求，服务端回 `Signature invalid (101)`（真实缺陷，用户报障）。
+    // 请求，服务端回 `Signature invalid (101)`（真实缺陷，现场反馈）。
     // 这里调用注入的钩子补一次（实现会调 userinfo 并回写凭据）。
     credential = await this.ensureUid(credential)
 
@@ -694,7 +694,7 @@ export class QoderAdapter extends LlmAdapter {
     const history = buildQoderHistory(messages)
     // ⚠️ 工具定义必须真的下发：加密端点的顶层 `tools`。不下发时模型只能
     // 用正文里的 XML 文本臆造工具调用 → harness 认不出 → 任务终止
-    // （用户报障「qwen3.8-flash 执行任务出现任务调用 xml 泄露任务终止」）。
+    // （现场反馈「qwen3.8-flash 执行任务出现任务调用 xml 泄露任务终止」）。
     const tools = buildQoderTools(options.tools)
 
     const fallback = this.fallbackIndex.get(options.model)
@@ -750,7 +750,7 @@ export class QoderAdapter extends LlmAdapter {
     // | 重复请求 | 业务码（客户端 `_TA="duplicate_request"`） | 不刷新凭据，直接重发一次 |
     // | 认证失败 | 业务码 `105`（`auth_error`）或 401 | 续期凭据后重试（**唯一**该走 refresh 的情形） |
     //
-    // ⚠️ **真实缺陷**（用户报障，2026-09-27）：旧实现把**所有** 401/403 都当认证
+    // ⚠️ **真实缺陷**（现场反馈，2026-09-27）：旧实现把**所有** 401/403 都当认证
     // 失败 → 排队时白白续期一次，再落到 harness 的 5 次通用退避（500/1000/2000/
     // 4000/8000 ≈ 共 15.5 秒）—— 而服务端明确要求等 30 秒，于是**永远等不到**；
     // 中国版那条「等 2 秒就能成功」的瞬时排队也因走错路径而反复失败。
@@ -783,7 +783,7 @@ export class QoderAdapter extends LlmAdapter {
     // 4. 剥掉加密端点的响应信封，交给统一的 OpenAI SSE 消费器。
     //
     // ⚠️ **必须放在重试循环内**：排队错误的**第二种**下发形态是
-    // **HTTP 200 + SSE 内嵌 `{code:"10605",…}` 帧**（真实缺陷，用户报障
+    // **HTTP 200 + SSE 内嵌 `{code:"10605",…}` 帧**（真实缺陷，现场反馈
     // 2026-09-27 —— 第一版修复只覆盖了 HTTP 403 形态，于是这条路径被
     // SSE 消费器归为 `SERVER` 直接抛给 harness，以 500…8000ms 快退避重试
     // 5 次，而服务端要求等 30 秒，**永远等不到**）。

@@ -99,7 +99,7 @@ const PROBE_PROMPT = '只回答两个字：收到'
 /**
  * 探测请求的 system 提示。
  *
- * ⚠️ **不可省略，也刻意不随产品切换**（真实缺陷，用户报障）。
+ * ⚠️ **不可省略，也刻意不随产品切换**（真实缺陷，现场反馈）。
  *
  * WorkBuddy 国际版网关（`www.workbuddy.ai`）**强制要求 `messages[0]` 是
  * `role:'system'`**，否则返回 HTTP 400 + `code 11128`

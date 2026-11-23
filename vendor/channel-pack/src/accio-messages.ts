@@ -233,7 +233,7 @@ function normalizeAccioPart(part: unknown): unknown | undefined {
  * ⚠️ 已经是标准形状（含 `candidates`）时**原样返回同一引用** ——
  * 容忍上游某天改成标准形状，也便于测试断言。
  *
- * ## ⚠️⚠️ 「无 `content`」≠「无用帧」（2026-10-13 真实缺陷，用户报障
+ * ## ⚠️⚠️ 「无 `content`」≠「无用帧」（2026-10-13 真实缺陷，现场反馈
  * 「accio 思考一下就中断」的根因之一）
  *
  * 旧判据「无 `content` 一律 `return undefined`」把三类**有语义**的帧整帧丢弃：

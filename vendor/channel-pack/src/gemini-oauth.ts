@@ -327,7 +327,7 @@ export async function refreshGeminiCredential(
  *
  * ⚠️ 用 `id`（= `sub`）当账号主键：邮箱用户可以随时改，`sub` 不会变。
  * 失败**不抛错**（身份只是展示信息，不该让整个授权失败），但会通过
- * `onFailure` 上报原因 —— 2026-10-03 用户报障「昵称退化成池 id」时这里
+ * `onFailure` 上报原因 —— 2026-10-03 现场反馈「昵称退化成池 id」时这里
  * 静默吞掉了一切异常，导致无从排查。
  */
 export async function fetchGeminiUserInfo(

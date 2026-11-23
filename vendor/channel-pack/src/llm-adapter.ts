@@ -555,7 +555,7 @@ export function isAuthError(status: number, body: string): boolean {
  * （见下方排队循环的长注释），而它误以为自己"在排队"。实测真实适配器
  * 25 秒内发出 4 次 chat 请求 + 3 次排队探测、**产出 0 个 chunk**，最终由
  * 用户手动中止（会话记录里是 `turn/end aborted` + `stream: []`，**没有任何
- * error 事件** —— 因为错误根本没被抛出）。这正是用户报障的「CodeArts Agent
+ * error 事件** —— 因为错误根本没被抛出）。这正是现场反馈的「CodeArts Agent
  * 没反应」。
  *
  * ⇒ 现在 `429` 用 `(^|[^0-9])429([^0-9]|$)` 锚定为独立数字：`…81111.429`（结尾）
@@ -1122,7 +1122,7 @@ export class CodeArtsAdapter extends LlmAdapter {
    *
    * 设置页必须渲染被关闭的模型（否则用户无法重新打开），而 `listModels` 会按
    * 黑名单过滤掉它们 —— RPC 层只能凭裸 id 补回，展示名随之丢失
-   * （用户报障：「关闭的就没有显示倍率」）。CodeArts 目录虽无倍率，但同样
+   * （现场反馈：「关闭的就没有显示倍率」）。CodeArts 目录虽无倍率，但同样
    * 需要正确的 `name`（否则关闭项显示 `deepseek-v4-flash` 这类裸 id）。
    */
   listAllModels(): readonly { id: string; name: string }[] {
@@ -1315,7 +1315,7 @@ export class CodeArtsAdapter extends LlmAdapter {
       // InferHub.002002009.404 "model is not registered"。
       //
       // 判定必须是**动态**的：早期只硬编码 glm-5.3-flash 一个模型，导致
-      // deepseek-v4.1-flash 等其它 benefit 模型调用失败（用户报障：
+      // deepseek-v4.1-flash 等其它 benefit 模型调用失败（现场反馈：
       // 发消息后报 Insufficient Balance / QUOTA —— 缺该头时后端按非 benefit
       // 通道处理该模型）。实证见 CODEARTS_BENEFIT_FALLBACK 注释。
       const extraSignedHeaders = isBenefitModel && !benefitHeaderDropped ? { maas_type: 'benefit' } : undefined
@@ -1634,7 +1634,7 @@ export class CodeArtsAdapter extends LlmAdapter {
     /**
      * **正文**死循环检测（**独立实例**，见 `createReasoningLoopDetector`）。
      *
-     * 真实缺陷（用户报障，2026-09-25）：唯一活动 session 出现**正文**循环，
+     * 真实缺陷（现场反馈，2026-09-25）：唯一活动 session 出现**正文**循环，
      * 而旧实现只在 reasoning 分支调 `observe` → 正文循环完全看不见。
      *
      * ⚠️ 两个实例不可合并：判据看尾部 3000 字符窗口的行去重率，两条通道
@@ -1846,7 +1846,7 @@ export class CodeArtsAdapter extends LlmAdapter {
             // ⚠️ 顺序不可颠倒：额度耗尽（InferHub.4291.200）必须**先**于排队判据
             // 检查。历史上它们混淆过一次 —— `4291` 被 `429` 的裸子串匹配吃掉，
             // 额度错误因此被当成「可重试的排队」，进入 30 分钟静默重试循环，
-            // 界面零输出（用户报障「没反应」的直接原因）。
+            // 界面零输出（现场反馈「没反应」的直接原因）。
             // 现在两个判据已互斥（裸 `429` 已锚定为独立数字），这里的先后仍保留：
             // 它把「额度优先」表达成代码结构，防止后续再有人放宽 `429` 判据。
             if (isSseQuotaExhaustedErrorCode(data.error_code, message)) {
@@ -2325,7 +2325,7 @@ const RATE_LIMIT_BUSINESS_CODE = 6004
  * 为什么需要兜底：并非所有限流错误都带得上结构化 code —— SSE 流内错误、
  * 网关返回的裸文本、以及 CodeArts（华为云）的中文错误都只有文案可判。
  *
- * ⚠️ **中英文都必须列全**。历史缺陷（用户报障，仅国际版暴露）：此处早期只有
+ * ⚠️ **中英文都必须列全**。历史缺陷（现场反馈，仅国际版暴露）：此处早期只有
  * 中文词（频率限制 / 使用量已超出 / 频率超出 / 重置），而国际版 WorkBuddy
  * （www.workbuddy.ai）返回的是英文
  * `usage exceeds frequency limit ... your usage will reset at <时间> UTC+8`。

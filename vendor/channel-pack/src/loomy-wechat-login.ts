@@ -55,7 +55,7 @@ import {
  *
  * 保留这个纯函数是为了让「平台分派」有**可离线单测**的落点 ——
  * 早期这里有个会真的 spawn 浏览器的 `defaultOpenBrowser`，单测一调它
- * 就弹出 `http://127.0.0.1:1/never`（真实缺陷，用户报障）。
+ * 就弹出 `http://127.0.0.1:1/never`（真实缺陷，现场反馈）。
  * 现在只测这个纯函数，**永不 spawn**。
  */
 export function resolveOpenCommand(

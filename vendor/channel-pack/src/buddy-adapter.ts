@@ -618,7 +618,7 @@ function isContentRejection(body: string): boolean {
  *
  * ## 为什么取 30 分钟
  *
- * - 太短（如 1 分钟）挡不住一个 agent 轮次里的连续重发 —— 那正是用户报障的
+ * - 太短（如 1 分钟）挡不住一个 agent 轮次里的连续重发 —— 那正是现场反馈的
  *   「每次都拿最先选中的坏账号去撞」；
  * - 太长则把「其实已恢复」的账号白白锁死（服务端策略可能随时间/额度状态解除）；
  * - 30 分钟也限制了误伤窗口：标记**只随时间到期失效**（`getAvailableAccount`
@@ -1213,7 +1213,7 @@ export class BuddyAdapter extends LlmAdapter {
    * —— 新用户限时免费变体 —— **只由 `/v3/config` 下发**，且被
    * `craft`/`ask`/`plan` 三个 agent 引用（即服务端声明「对话里可选」），
    * 但**不在兜底表**里。白名单重建会把它丢掉，于是用户看不到那个免费变体，
-   * 而 IDE 里能看到（用户报障「hy4 preview 现在 ide 是免费我们还是 0.29」）。
+   * 而 IDE 里能看到（现场反馈「hy4 preview 现在 ide 是免费我们还是 0.29」）。
    *
    * 判据用 `agentReferenced`（服务端自己的「可选」信号）而非猜测 id 后缀 ——
    * 后缀规则不统一（`-f` / `-x` / `-sg` / `-ioa` 含义各异），猜错会放进
@@ -1339,7 +1339,7 @@ export class BuddyAdapter extends LlmAdapter {
    * 设置页（Channel Pack「显示列表」）必须把**被关闭的**模型也渲染出来，否则用户
    * 无法重新打开；而 `listModels` 会按黑名单过滤掉它们，RPC 层只能凭黑名单的
    * key（裸 id）补回 —— 那条路径拿不到展示名，只能退化成裸 id，**倍率随之丢失**
-   * （用户报障：「关闭的就没有显示倍率」）。
+   * （现场反馈：「关闭的就没有显示倍率」）。
    *
    * ⚠️ 同名消歧必须基于**未过滤**的全量集合：`displayNameFor(model, source)`
    * 而非 `listed`。用过滤后的集合会让「关掉其中一个同名模型」改变另一个的
@@ -1657,7 +1657,7 @@ export class BuddyAdapter extends LlmAdapter {
           this.options.accountPool, this.product.id, currentAccountId, options.model,
         )
       }
-      // ⚠️ 真实缺陷（2026-09-26，用户报障「账号池里明明有 3~4 个账号没被限流，
+      // ⚠️ 真实缺陷（2026-09-26，现场反馈「账号池里明明有 3~4 个账号没被限流，
       // 却报『未配置凭据，请先登录』」）。早期实现在这里刷新一次就 `return`：
       //
       // ① **不换号** —— 池首账号被服务端拒绝（401/403）时，池里其余可用账号
@@ -1828,7 +1828,7 @@ export class BuddyAdapter extends LlmAdapter {
       // **1 小时**限流标记（报文里没有「将在…重置」，故取 `RATE_LIMIT_FALLBACK_MS`
       // 兜底），把**整池**锁死。
       //
-      // 用户报障正是这个：第一次用 `buddy/space-bunny` 就报
+      // 现场反馈正是这个：第一次用 `buddy/space-bunny` 就报
       // 「模型 space-bunny 所有账号均受限」。
       //
       // 实测四条证据（`scripts/probe-buddy-*.mjs`，2026-10-05）：
@@ -1910,7 +1910,7 @@ export class BuddyAdapter extends LlmAdapter {
         // ⚠️ 限流换号途中同样会撞上安全策略拦截（11140，HTTP 403）—— 它按账号
         // 生效、与限流无关，但**必须继续换号**而不是中断。
         //
-        // 真实缺陷（用户报障 2026-09-28「本轮运行失败 · API 密钥无效」）：早期
+        // 真实缺陷（现场反馈 2026-09-28「本轮运行失败 · API 密钥无效」）：早期
         // 实现在这里遇到非限流错误就**直接抛**。而池里 7 个 workbuddy 账号中
         // 前 4 个恰是被 11140 拦截的坏账号、后 3 个可用，于是换号在第 1 个坏
         // 账号处就中断，后面 3 个可用账号**永远试不到**（实测复刻：中断于
@@ -2707,7 +2707,7 @@ function isCredentialExpired(credential: BuddyCredential): boolean {
  *
  * ⚠️ **必须写进 `name` 而不是 `description`**：composer 的模型切换菜单只渲染
  * `name`（见 ModelSelect 的 `children: model.name`），`description` 仅用于
- * `/model` 弹窗。用户报障「消耗倍率没有显示在切换模型列表的后面」正是因为
+ * `/model` 弹窗。现场反馈「消耗倍率没有显示在切换模型列表的后面」正是因为
  * 早期版本放在了 `description`。
  *
  * 安全性：`name` **纯属展示** —— DSH 的选择与持久化只用 `id`

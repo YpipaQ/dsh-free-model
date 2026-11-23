@@ -20,7 +20,7 @@
  * 失败时内层 `body` 是业务错误 JSON（`[FAIL]node:... msg:...`），
  * 必须**抛出**而不是当成无内容 —— 否则会重演「静默停止」那个缺陷。
  *
- * ⚠️ **转发时必须保留 `code` 字段**（真实缺陷，用户报障 2026-09-27）：
+ * ⚠️ **转发时必须保留 `code` 字段**（真实缺陷，2026-09-27 现场反馈）：
  * 旧实现把内层 `{code, message}` 降级重组为 `{error:{message:"… (code)"}}`，
  * 把 `code` 拼成文案后缀并**丢掉字段** —— 于是下游
  * `consumeOpenAiSse` 的排队识别（依赖顶层 `code === '10605'`）**永远不命中**，
@@ -180,7 +180,7 @@ export function unwrapQoderEnvelopeStream(response: Response, label: string): Re
             if (typeof parsed.message === 'string') message = parsed.message
           } catch { /* 保持原文 */ }
           // ⚠️ **`code` 必须保持为独立字段，且 `message` 不得被拼后缀**
-          //（真实缺陷，用户报障 2026-09-27）：旧实现产出
+          //（真实缺陷，2026-09-27 现场反馈）：旧实现产出
           // `{error:{message:"… (10605)"}}` —— 既**丢掉 `code` 字段**，
           // 又把后缀拼进 `message`。两个后果都很隐蔽：
           //   ① `consumeOpenAiSse` 的排队识别依赖顶层 `code === '10605'`，

@@ -169,7 +169,7 @@ export class TraeAuth extends Service {
    * 于是**下一次** `listModels` / `resolveModel` 会再拉一次。
    *
    * 「未登录 TRAE」恰好就是恒空的情形：用户每打开一次模型选择器、每次
-   * 解析模型都发起一次真实 HTTP 请求。用户报障的日志刷屏
+   * 解析模型都发起一次真实 HTTP 请求。现场反馈的日志刷屏
    * （同一行 `fetchModels: calling …` 重复数十次）正是这么来的。
    *
    * 故这里**连同空结果一起缓存**，并给一个短 TTL（登录后 30s 内即可自愈，
@@ -253,7 +253,7 @@ export class TraeAuth extends Service {
         provider: this.product.id,
         // ⚠️ 用 `traeDisplayNickname`（手机号优先）而非直接取 `nickname`：
         // 服务端的 ScreenName 是**按 uid 自动生成的默认名**，多账号无法区分。
-        // 见该函数的说明（用户报障 2026-09-27）。
+        // 见该函数的说明（2026-09-27 现场反馈）。
         nickname: traeDisplayNickname(credential, flowOptions.accountId),
         enabled: true,
         credentialRef: flowOptions.refName ?? this.credentialRefName,
@@ -489,7 +489,7 @@ export class TraeAuth extends Service {
   /**
    * 一次性修复**老账号**的展示名：补 `GetUserInfo` 拿脱敏手机号并重算昵称。
    *
-   * ## 为什么需要它（真实缺陷，用户报障 2026-09-27）
+   * ## 为什么需要它（真实缺陷，2026-09-27 现场反馈）
    *
    * > 用 trae provider 登录后用户名字显示无法区分各个用户，有其他名字昵称或者
    * > 手机尾号之类的信息可以区分吗？
@@ -633,10 +633,10 @@ export class TraeAuth extends Service {
    * **成功路径一律不打印**。早期这里用 `console.warn` 打了「calling / got N
    * models」，而本方法在冷启动阶段会被调用多次（每次 `listModels` /
    * `resolveModel` 都可能触发，见 `TraeAdapter.ensureRemoteModels`），
-   * 于是整个日志被同一行刷屏 —— 用户报障「fetch 的 log 似乎太多了」。
+   * 于是整个日志被同一行刷屏 —— 现场反馈「fetch 的 log 似乎太多了」。
    *
    * **「没有凭据」不是异常**：未登录 TRAE 的用户每次列模型都会走到这条分支，
-   * 打日志只会制造噪声（用户报障「没有账号不需要显示 no credential
+   * 打日志只会制造噪声（现场反馈「没有账号不需要显示 no credential
    * resolved from store」）。真正需要关注的失败（HTTP 非 2xx、网络异常）
    * 才记录。
    */

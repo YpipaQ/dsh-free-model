@@ -223,7 +223,7 @@ export interface QoderProduct {
    * 即第 4 参是 **`isProd()`（布尔）**：prod → `true` → **`J_a`**；
    * 非 prod（daily/test）→ `false` → `G_a`。
    *
-   * **真实缺陷**（用户报障）：早期把第 4 参误读成「useIdeClientId」，
+   * **真实缺陷**（现场反馈）：早期把第 4 参误读成「useIdeClientId」，
    * 于是 prod 用了 `G_a`，GitHub 授权回调后被服务端拒绝，页面报
    * 「参数无效 / 你可以稍后前往 IDE 客户端并登录Qoder」。
    */
@@ -340,7 +340,7 @@ export interface QoderProduct {
  *
  * 早期误把目录 key 发给公开端点 → `Unsupported model`；
  * 又误以为只有 11 个可用 → 表里换成通用名，结果拿到的是 Qwen3.5/2.5
- * 而非 Qwen3.8 系列（用户报障）。
+ * 而非 Qwen3.8 系列（现场反馈）。
  *
  * ## 数据来源
  *
@@ -483,7 +483,7 @@ export const QODER: QoderProduct = {
 const QODER_CN_FALLBACK_MODELS: readonly QoderFallbackModel[] = [
   // ⚠️ 全部数值逐条对照本机 CN catalog-v6 的 chat 场景实解值（2026-09-27）。
   // 国际版曾因为「手工估值 + 单测只断言 id 列表」让价格漂移长期未被发现
-  // （14 个模型有偏差，用户报障）。改本表必须重新跑探针对照。
+  // （14 个模型有偏差，现场反馈）。改本表必须重新跑探针对照。
   //
   // ⚠️ **`contextWindow` 取官方档位表 `context_config` 的最大档，不是 `max_input_tokens`。**
   //

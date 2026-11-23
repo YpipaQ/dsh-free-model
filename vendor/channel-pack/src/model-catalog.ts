@@ -328,7 +328,7 @@ export function createModelCatalog(
 
     /**
      * ⚠️ **同步**（契约要求，见 `ModelCatalogConfig.syncCatalog` 的说明）。
-     * **不套黑名单** —— 设置页要能看到已关闭模型的倍率（用户报障：
+     * **不套黑名单** —— 设置页要能看到已关闭模型的倍率（现场反馈：
      * 「关闭的就没有显示倍率」）。
      */
     listAllModels(): readonly { id: string; name: string; isFree?: boolean }[] {

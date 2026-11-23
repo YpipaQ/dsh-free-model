@@ -153,7 +153,7 @@ export class GeminiAuth extends Service {
       fetcher: this.fetchImpl,
       ...this.options.callbackPort === undefined ? {} : { callbackPort: this.options.callbackPort },
       // 身份正常情况下从令牌响应的 `id_token` 解出（零额外请求）；这里的
-      // userinfo 只是兜底。**兜底失败必须留日志** —— 2026-10-03 用户报障
+      // userinfo 只是兜底。**兜底失败必须留日志** —— 2026-10-03 现场反馈
       // 「昵称退化成池 id」时，失败被静默吞成 `{}`，现场零线索可查。
       onIdentityFailure: (reason) => {
         this.ctx.logger?.warn?.(

@@ -539,7 +539,7 @@ export function buildTraeCredential(
 /**
  * 构造 TRAE 账号在 Channel Pack 里的**展示名**：手机号优先，缺失时回退 ScreenName。
  *
- * ## 为什么不是直接用 ScreenName（真实缺陷，用户报障 2026-09-27）
+ * ## 为什么不是直接用 ScreenName（真实缺陷，2026-09-27 现场反馈）
  *
  * > 用 trae provider 登录后用户名字显示无法区分各个用户，有其他名字昵称或者
  * > 手机尾号之类的信息可以区分吗？
@@ -740,7 +740,7 @@ export interface TraeRemoteModel {
    *
    * ## 为什么必须按模型读，而不能按 provider 一刀切
    *
-   * **真实缺陷**（用户报障 / Issue #IKHDKC「TRAE 字节 模型不支持图片」）：
+   * **真实缺陷**（现场反馈 / Issue #IKHDKC「TRAE 字节 模型不支持图片」）：
    * 早期实现把 TRAE 的 `inputModalities` 恒定为 `['text']`（理由写的是
    * 「SOLO 通道未见图片能力」），于是 DSH 在**附件准入阶段**就把图片拒了
    * —— 图根本没发到上游，用户看到「当前模型不支持图片，请切换支持图片的模型」，

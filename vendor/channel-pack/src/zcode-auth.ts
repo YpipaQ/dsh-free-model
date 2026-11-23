@@ -106,7 +106,7 @@ export interface ZcodeProbeResult {
  * 阿里云验签时会把 param 与请求头 `x-aliyun-captcha-verify-region` **成对**校验，
  * 两边不是同一个 region 就必然 `400 / 3007`（captcha 校验失败）。
  *
- * ⚠ 真实缺陷（Gitee issue IKJNPS，用户报障，非 cn 区账号 100% 复现）：
+ * ⚠ 真实缺陷（Gitee issue IKJNPS，现场反馈，非 cn 区账号 100% 复现）：
  * 「一键领取」此前由调用方自己去 `fetchCaptchaConfig()` 拿配置产 param，
  * 而 region 走 `claimDailyFor` 的**兜底常量** `ZCODE_CAPTCHA_FALLBACK.region`
  * （`cn`）。于是 z.ai 国际渠道（服务端下发 `region: "sgp"`）这类账号
@@ -1182,7 +1182,7 @@ export class ZcodeAuth extends Service {
      *     而上游说的是 `1_000_000` / `128_000`；
      *   - **思考档位完全不出现**（兜底表当时没有档位字段）。
      *
-     * 用户报障正是「上下文窗口 1000000、最大输出 128000，但选不了思考档位」
+     * 现场反馈正是「上下文窗口 1000000、最大输出 128000，但选不了思考档位」
      * —— 那两个数字来自上游/用户手填，而**档位是代码里根本没有**。
      *
      * ⇒ 档位、视觉能力、窗口、输出上限**全部以上游为准**。
@@ -1347,7 +1347,7 @@ export class ZcodeAuth extends Service {
    * 修复前的形态是**两份真相**：`channel-pack-rpc.ts` 的注入回调自己
    * `fetchCaptchaConfig()` 拿配置产 param，而 region 走本方法的**默认参数**
    * `ZCODE_CAPTCHA_FALLBACK.region` ⇒ 非 cn 区账号 100% 领不到
-   * （用户报障：15/15 全部 3007；同账号改用配置里的 region 后立即成功 +100M）。
+   * （现场反馈：15/15 全部 3007；同账号改用配置里的 region 后立即成功 +100M）。
    *
    * ⇒ 这里解析**一次**配置，region 从它取、并把它传给注入回调：
    * 「产 param 的那份」与「写 region 的那份」从此是**同一个对象**。
@@ -1431,7 +1431,7 @@ export class ZcodeAuth extends Service {
       //   client 只要看到它就一直产（成功冷却 25s 一轮），而没人消费 ⇒ 白烧设备级配额。
       setCaptchaDemand(false)
       /**
-       * ★ **领取结束即关掉外挂 chromium**（用户报障 2026-10-02）。
+       * ★ **领取结束即关掉外挂 chromium**（现场反馈 2026-10-02）。
        *
        * > 领取完 chromium 还是留存在任务栏，图标还会闪烁。
        *
@@ -1741,7 +1741,7 @@ export class ZcodeAuth extends Service {
    *
    * ## ⚠⚠ 这里曾经有一个**数据破坏缺陷**（真实缺陷，2026-10-02）
    *
-   * **用户报障**：「登录了 2 个账号（两个不同微信各自收到 bigmodel 登录通知），
+   * **现场反馈**：「登录了 2 个账号（两个不同微信各自收到 bigmodel 登录通知），
    * 第二个账号有余额，但插件刷新积分显示 0，发消息报『额度已用尽』，
    * 而 IDE 里同一个账号发消息能收到回复」。
    *
@@ -1917,7 +1917,7 @@ export class ZcodeAuth extends Service {
   /**
    * ★ **关掉外挂 chromium** —— 只由**领取积分**流程在收尾时调用。
    *
-   * ## 为什么需要（用户报障 2026-10-02）
+   * ## 为什么需要（现场反馈 2026-10-02）
    *
    * > 领取完 chromium 还是留存在任务栏，图标还会闪烁。
    *

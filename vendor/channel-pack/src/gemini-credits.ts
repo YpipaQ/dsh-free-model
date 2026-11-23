@@ -377,7 +377,7 @@ async function requestQuotaSummary(
     return {
       balance: null,
       // ⚠️ 403 有两种成因，文案不能一概说"凭据已失效"：本账号缺 5 小时窗口时
-      // 上游对 `{}` 回 `SUBSCRIPTION_REQUIRED`，凭据其实是好的（用户报障形态）。
+      // 上游对 `{}` 回 `SUBSCRIPTION_REQUIRED`，凭据其实是好的（现场反馈形态）。
       // 这里把上游的 `reason` 透出来，否则面板只会误导人去重新登录。
       error: response.status === 401 || response.status === 403
         ? `配额查询被拒（HTTP ${response.status}）${quotaRejectionHint(text)}`

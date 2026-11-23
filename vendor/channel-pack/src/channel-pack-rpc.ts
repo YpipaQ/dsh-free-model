@@ -946,7 +946,7 @@ export interface ModelCatalogSource {
  * 广播「模型目录可能已变化」。
  *
  * ⚠️ **改黑名单后必须调用**，否则「关闭后选择器里仍能看到该模型，重启后才消失」
- * （真实缺陷，用户报障）。根因在客户端而非适配器：
+ * （真实缺陷，现场反馈）。根因在客户端而非适配器：
  * `dsh-client-ui-model-selection` 的 `ModelCatalogDirectory` 把 `modelCatalog`
  * 响应存进一个 `status === 'ready'` 即**短路返回缓存**的 store，只在三个转发的
  * 宿主事件上 `refresh()`：`llm/adapters-updated` / `settings/document-updated`
@@ -1705,7 +1705,7 @@ function registerChannelPackEndpoints(
             await pool.updateAccount(id, {
               // ⚠️ 用 `traeDisplayNickname`（手机号优先）而非直接取 `nickname`：
               // 服务端 ScreenName 是**按 uid 自动生成的默认名**，多账号无法区分
-              // （用户报障 2026-09-27）。见该函数的说明。
+              // （2026-09-27 现场反馈）。见该函数的说明。
               nickname: traeDisplayNickname(credential, id),
               expiresAt: credential !== undefined ? traeCredentialExpiresAtMs(credential) : undefined,
               refreshable: credential !== undefined && isTraeRefreshable(credential),
@@ -1757,7 +1757,7 @@ function registerChannelPackEndpoints(
           // 起本地服务器承载弹窗页（内联二维码 + 轮询 + 首次绑手机号表单），
           // 立即返回 `loginUrl` 让前端 `window.open`。
           //
-          // ⚠️ **真实缺陷**（用户报障「新建账号失败：Loomy 短信登录需要手机号」）：
+          // ⚠️ **真实缺陷**（现场反馈「新建账号失败：Loomy 短信登录需要手机号」）：
           // 早期实现要求 `account.create` **必须带 phone**，但表单要等它返回
           // `loginMode:'sms'` 才渲染 —— 用户根本没机会输入手机号，直接报错，
           // 表单永远出不来。**顺序死锁**。改用微信扫码后此矛盾消失：
@@ -2065,7 +2065,7 @@ function registerChannelPackEndpoints(
             await pool.updateAccount(id, {
               // ⚠️ 用 `geminiAccountLabel`（邮箱优先）而非 `accountId.slice(0, 8)`：
               // `sub` 是 21 位数字，截前 8 位得到 `Gemini 10500520` 这种**不可辨认**
-              // 的展示名（用户报障 2026-10-03）。`sub` 的价值是「稳定标识」，不是
+              // 的展示名（现场反馈 2026-10-03）。`sub` 的价值是「稳定标识」，不是
               // 「显示名」—— 展示要的是可辨识，邮箱正好。
               // 取不到邮箱时该函数回退 `sub`，两者都无则退化为池 id。
               nickname: geminiAccountLabel(credential) ?? id,
@@ -2665,7 +2665,7 @@ function registerChannelPackEndpoints(
           // raccoon 的领取端点是**幂等**的：已领过返回 `granted:false`，
           // 此时 claimed 为空数组、skipped 含该项。
           //
-          // ⚠️ **已领时 `earned` 必须报满分，不是 0**（真实缺陷，用户报障）。
+          // ⚠️ **已领时 `earned` 必须报满分，不是 0**（真实缺陷，现场反馈）。
           // `earned` 回答的是「该项目**累计**领到多少」，与「本次请求是否新增」
           // 无关。早期在 `already-claimed` 分支写 `earned: 0`，于是 UI 显示
           // 「✅ 1 个此前已完成 / 累计已领 0 / 3000」—— **自相矛盾**：
@@ -2964,7 +2964,7 @@ function registerChannelPackEndpoints(
             // `{code:0, message:"success"}`，与真正领取成功**无法区分**。
             // 早期照抄 LobsterAI 传了 `precheckStatus: false`（那是「领取流程内部
             // 已做 slot/context 预检」的理由，TRAE 没有这回事），于是已签到的账号
-            // 被报成「领取成功」（用户报障：显示成功但 +0 积分）。
+            // 被报成「领取成功」（现场反馈：显示成功但 +0 积分）。
             // 判据只能是 status 端点的 `checked_in`。
             fetchStatus: (credential) =>
               fetchTraeCheckinStatus(credential as TraeCredential, TRAE, fetch),
@@ -3125,7 +3125,7 @@ function registerChannelPackEndpoints(
                  * 阿里云验签成对校验二者，不一致即 `400 / 3007`。此前这里**自己**去
                  * 拉一份 captcha 配置（拿到的是服务端真实 region，如 `sgp`），
                  * 而 `claimDailyFor` 的 region 走兜底常量 `cn` ⇒ 非 cn 区账号
-                 * 「一键领取」100% 失败（用户报障：15/15 全部 captcha 校验失败）。
+                 * 「一键领取」100% 失败（现场反馈：15/15 全部 captcha 校验失败）。
                  * 现在配置由 `claimDailyWith` 解析一次并传进来，两边天然同源。
                  */
                 accountOutcomes = await zcode.claimDailyFor(credential, async (config) => {
@@ -3201,7 +3201,7 @@ function registerChannelPackEndpoints(
             fetchBalance: (credential, product) => fetchLobsteraiCreditBalance(credential, product),
             warn: (msg) => ctx.logger?.warn?.(msg),
           })
-          // ⚠️ LobsterAI 也回传窗口天数（用户报障「账号的积分没按长期、临时方式
+          // ⚠️ LobsterAI 也回传窗口天数（现场反馈「账号的积分没按长期、临时方式
           // 显示」）：它的每个资源包都带 `expiresAt`（已归一化到
           // `deductionEndTime`），面板要按到期远近分「长期 / 临时」。
           // 窗口语义与 buddy / TRAE 一致，共用同一个环境变量。
@@ -3776,7 +3776,7 @@ function registerChannelPackEndpoints(
               // ⚠️ **优先用网关报的真实上游渠道**（`alibaba` 等，见
               // `src/cline-routing.ts`）；它没报时才回落到模型命名空间
               // （`cline-pass` / `cline-free`）—— 后者是**订阅通道**
-              // （甚至可能是厂商名），不是 serving channel，用户报障点正在于此。
+              // （甚至可能是厂商名），不是 serving channel，现场反馈点正在于此。
               upstream: row.upstream.length > 0 ? row.upstream : clineUpstreamOf(row.model),
               // ⚠️ 必须透传「是否收到 usage」：表格据此把未知显示成 `—`,
               // 而不是 0（0 会被读成「瞬间完成、没花 token」）。
@@ -3791,7 +3791,7 @@ function registerChannelPackEndpoints(
               ttftMs: row.ttftMs,
               // ⚠️ 首个**正文**块耗时必须透传：展示层的「输出速率」拿它当分母
               // 起点（分子是正文 token 数）。缺了它速率会虚高到物理不可能的值
-              // —— 用户报障的 `11814.8 t/s` 就是分子分母跨阶段的产物。
+              // —— 现场反馈的 `11814.8 t/s` 就是分子分母跨阶段的产物。
               ttfcMs: row.ttfcMs,
               totalMs: row.totalMs,
               ...row.error !== undefined ? { error: row.error } : {},
@@ -3835,7 +3835,7 @@ function registerChannelPackEndpoints(
         // - 它不存在时（外部/旧适配器）退化为「listModels 结果 + 黑名单补回裸 id」，
         //   此时关闭项只能显示 id（历史行为）。
         //
-        // ⚠️ 展示名必须来自**不套黑名单**的全量目录而非裸 id：用户报障
+        // ⚠️ 展示名必须来自**不套黑名单**的全量目录而非裸 id：现场反馈
         // 「关闭的就没有显示倍率，关闭的应该也显示倍率」—— 根因正是补回时只有
         // id 可用。适配器实例由 `registerChannelPackRpc` 的 `modelAdapters` 传入
         // （DSH 的 `ctx.llm` 只保证 `listModels`，不透传自定义方法）。

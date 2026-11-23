@@ -263,7 +263,7 @@ export class OpencodeAdapter extends LlmAdapter {
         provider: OPENCODE.id,
         id: m.id,
         name: m.name,
-        // ⚠️ 模态以**远端能力表**为准，不再一律 text（用户报障
+        // ⚠️ 模态以**远端能力表**为准，不再一律 text（现场反馈
         // 「space-bunny-free 发图提示不支持」：该模型实测接受图片，
         // 而我们硬编码 ['text'] 让 DSH 在本地就把图投影成了文字占位符）。
         // ⚠️ 能力表拿不到时**保守回退 text**（`inputModalitiesOf` 的实现）——

@@ -831,7 +831,7 @@ export class LobsteraiAdapter extends LlmAdapter {
    * - **`name` = `level`（产品侧档位名）**：纯展示。远端把 `level: 'max'` 映射到
    *   `openclawLevel: 'xhigh'`，用户在产品侧看到的就是 **Max**。
    *
-   * ⚠️ **历史缺陷**（用户报障 / Issue #IKHCZF）：早期用 `openclawLevel` 同时查
+   * ⚠️ **历史缺陷**（现场反馈 / Issue #IKHCZF）：早期用 `openclawLevel` 同时查
    * 展示名表，于是最强档显示成 **XHigh**，与产品侧命名 **Max** 不一致 ——
    * 用户按 IDE 里的「Max」找，界面上却只有「XHigh」。
    * 根因是把「wire 值」与「展示名」当成同一个概念。
@@ -882,7 +882,7 @@ export class LobsteraiAdapter extends LlmAdapter {
    *
    * 设置页必须渲染被关闭的模型（否则用户无法重新打开），而 `listModels` 会按
    * 黑名单过滤掉它们 —— RPC 层只能凭裸 id 补回，展示名与倍率随之丢失
-   * （用户报障：「关闭的就没有显示倍率」）。详见 `model.list` 端点的注释。
+   * （现场反馈：「关闭的就没有显示倍率」）。详见 `model.list` 端点的注释。
    */
   listAllModels(): readonly { id: string; name: string }[] {
     const source = this.remoteModels ?? this.staticFallbackModels()
@@ -1085,7 +1085,7 @@ export class LobsteraiAdapter extends LlmAdapter {
 
     // 5. 统一的重试循环：**HTTP 非 2xx 与流内错误帧都参与换号**。
     //
-    // ⚠️ 这是用户报障「一个账号用完出错但没有切换」的**根因**。
+    // ⚠️ 这是现场反馈「一个账号用完出错但没有切换」的**根因**。
     // 额度耗尽是以 **HTTP 200 + SSE 流内错误帧** 表达的（Web 上那句
     // 「lobsterai: 免费额度已用完，请升级套餐」正是 `consumeSse` 里
     // `data.error.message` 的产物），而早期实现把整个换号循环放在
@@ -1137,7 +1137,7 @@ export class LobsteraiAdapter extends LlmAdapter {
           if (emitted) throw error
 
           // 流内业务错误（如额度耗尽）且**尚未产出任何内容**：换号重试。
-          // 这正是用户报障「一个账号用完出错但没有切换」的修复点 ——
+          // 这正是现场反馈「一个账号用完出错但没有切换」的修复点 ——
           // 额度耗尽的错误帧是流里的**第一帧**，此前却因为整段换号逻辑
           // 位于 `if (!response.ok)` 之内而完全走不到。
           lastFromStream = true
@@ -1276,7 +1276,7 @@ export class LobsteraiAdapter extends LlmAdapter {
     /**
      * **正文**死循环检测（**独立实例**，见 `createReasoningLoopDetector`）。
      *
-     * 真实缺陷（用户报障，2026-09-25）：唯一活动 session 出现**正文**循环，
+     * 真实缺陷（现场反馈，2026-09-25）：唯一活动 session 出现**正文**循环，
      * 而旧实现只在 reasoning 分支调 `observe` → 正文循环完全看不见。
      *
      * ⚠️ 两个实例不可合并：判据看尾部 3000 字符窗口的行去重率，两条通道
@@ -1387,7 +1387,7 @@ export class LobsteraiAdapter extends LlmAdapter {
             // ⚠️ 必须抛**可分类的** `LobsteraiStreamError`：额度耗尽正是以
             // 这个形态下发的（HTTP 200 + `{error:{message:'免费额度已用完，请升级套餐'}}`），
             // 而早期这里抛的是裸 `LlmError`（固定 SERVER），换号循环
-            // 既看不到它、也无法判断该不该换号 —— 用户报障
+            // 既看不到它、也无法判断该不该换号 —— 现场反馈
             // 「一个账号用完出错但没有切换」的直接原因。
             const detail = data.error.message ?? 'unknown error'
             throw new LobsteraiStreamError(
@@ -1730,7 +1730,7 @@ export class LobsteraiAdapter extends LlmAdapter {
  *
  * ⚠️ **倍率必须写进 `name` 而不是 `description`**：composer 的模型切换菜单
  * 只渲染 `name`（见 dsh-client-ui-model-selection 的 ModelSelect：
- * `children: model.name`），`description` 仅用于 `/model` 弹窗。用户报障
+ * `children: model.name`），`description` 仅用于 `/model` 弹窗。现场反馈
  * 「消耗倍率没有显示在切换模型列表的后面」正是因为早期版本放在了
  * `description`。
  *

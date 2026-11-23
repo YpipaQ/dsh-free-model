@@ -372,7 +372,7 @@ export async function fetchModels(
    * ⚠️ 本函数是**两个**端点的并集（scoped + `/v3/config`），且它自己的注释就写明
    * 两集合 id 不同（`hy4-preview-f` 只在 config）—— 故「一个成功、一个失败」
    * 是**常态**，不是异常。旧判据 `models.length > 0` 会把它当成完整 ⇒ 永久缓存
-   * ⇒ 那个免费变体的促销倍率（`creditsRate`）再也回不来（用户报障原话：
+   * ⇒ 那个免费变体的促销倍率（`creditsRate`）再也回不来（现场反馈原话：
    * 「hy4 preview 现在 ide 是免费我们还是 0.29」）。
    */
   outcome?: BuddyCatalogOutcome,
@@ -417,7 +417,7 @@ export async function fetchModels(
     // —— 挂在我们**没有采用**的那个 id 上。
     //
     // 早期实现只返回 scoped，于是该促销永远对不上，界面显示 `x0.29`
-    // 而 IDE 显示免费（用户报障「hy4 preview 现在 ide 是免费我们还是 0.29」）。
+    // 而 IDE 显示免费（现场反馈「hy4 preview 现在 ide 是免费我们还是 0.29」）。
     //
     // 故这里补取 `/v3/config` 并**合并两个端点的模型**（同 id 以 scoped 为准，
     // 它带更完整的元数据），同时取其促销表。任何失败都不影响模型列表 ——

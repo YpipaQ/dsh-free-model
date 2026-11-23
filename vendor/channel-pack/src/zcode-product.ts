@@ -65,7 +65,7 @@ export interface ZcodeProduct {
    *
    * ⚠⚠️ **它不是「推理超时」**（真实缺陷 IKJOVB）：早期实现把它当推理时限，
    * 于是「模型一进入长时间思考」就必然撞满 → abort → `TIMEOUT` → harness
-   * 按可重试错误重试 → 又大思考 → 又撞满，形成死循环（用户报障：思考三分钟
+   * 按可重试错误重试 → 又大思考 → 又撞满，形成死循环（现场反馈：思考三分钟
    * 被截断，接着重试，又是雷霆大思考）。**长思考的正确保护是空闲超时**
    * （见 {@link streamIdleTimeoutMs}），不是墙钟。
    *
@@ -182,7 +182,7 @@ export interface ZcodeProduct {
  *
  * ## ⚠⚠ 上下文窗口 / 最大输出 / 思考档位：**全部照上游 `client/configs` 抄**
  *
- * **真实缺陷（用户报障）**：模型配置页里上下文窗口显示 **1,000,000**、
+ * **真实缺陷（现场反馈）**：模型配置页里上下文窗口显示 **1,000,000**、
  * 最大输出 **128,000**，而模型选择器里**没有任何思考档位可选** ——
  * 尽管 ZCode IDE 里可以设置（截图见用户反馈）。
  *
@@ -243,7 +243,7 @@ const ZCODE_FALLBACK_MODELS: readonly ZcodeFallbackModel[] = [
 export const ZCODE: ZcodeProduct = {
   id: 'zcode',
   // ⚠ 用『ZCode (智谱)』而非长名 —— 后者在 Channel Pack 的 provider Tab 里
-  // **触发换行**（与 Raccoon 同样的用户报障）。
+  // **触发换行**（与 Raccoon 同样的现场反馈）。
   // 与 `plugin-src/client/channel-pack.js` 的 `PROVIDERS` label 保持一致。
   displayName: 'ZCode (智谱)',
   /**

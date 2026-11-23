@@ -95,7 +95,7 @@ Four settings pages (down from nine):
 
 Sizes: `src/` went from **58 modules to 5** (`store/key/chan-relay/egress/trust`), the host `index.js`
 from **2343 to 684 lines**, the browser half `client.js` from **5992 to 2538 lines**, and the offline
-suites from 45 to **30**. Every `animation` and `@keyframes` rule is gone as well.
+suites from 45 to **32**. Every `animation` and `@keyframes` rule is gone as well.
 
 ## Configuration
 
@@ -148,7 +148,7 @@ the browser half talks to it over the shell's `connection` RPC (`usage.tokenLedg
 ## Tests
 
 ```bash
-npm test                            # 30 offline suites: no network, no quota
+npm test                            # 32 offline suites: no network, no quota
 node scripts/host-smoke-test.mjs     # the host HTTP surface only
 node scripts/client-lint.mjs         # the browser half only (dictionary keys, CSS reachability)
 ```
@@ -172,6 +172,7 @@ node scripts/client-lint.mjs         # the browser half only (dictionary keys, C
 | `channel-codearts-ua-codes` | CodeArts inference UA override (Huawei WAF rejects the `deepseek-harness/` prefix) + three business codes classified separately |
 | `channel-zcode-version-generation` | ZCode version and identity block must be the same generation (cross-generation means 405+3012 for every user) |
 | `channel-cline-snapshot-suffix` | Cline models with date/snapshot suffixes inherit the base model's capabilities (otherwise image support and context window are lost) |
+| `channel-doubao` | Doubao channel: deterministic device identity (rejects pre-verification ids) / cross-frame DSML normalisation / check-in exclusion |
 | `channel-officeace-checkin` | OfficeAce daily check-in: failures must log and release the hourly slot (otherwise the hour is pinned and the day's 1000 points are lost) |
 | `channel-accio-rotate` | Accio per-request account rotation (402/429 rotate+cooldown, 401 rotate *without* cooldown, 400 does not rotate) |
 | `channel-trae-image-order` | TRAE: tool-result images must come after all `tool` messages (otherwise 4027 permanently breaks the session) |

@@ -337,7 +337,7 @@ export function httpErrorCode(status: number): string {
 /**
  * **模型排队**（Qoder 业务码 `10605`）—— 从 SSE 错误帧里透出来的专用错误。
  *
- * ## 为什么需要它（真实缺陷，用户报障 2026-09-27）
+ * ## 为什么需要它（真实缺陷，2026-09-27 现场反馈）
  *
  * Qoder 的排队错误有**两种**下发形态，第一版修复只覆盖了第一种：
  *
@@ -457,7 +457,7 @@ export async function* consumeOpenAiSse(
   /**
    * **正文**死循环检测（**独立实例**，见 `createReasoningLoopDetector`）。
    *
-   * ## 真实缺陷（用户报障，2026-09-25）
+   * ## 真实缺陷（现场反馈，2026-09-25）
    *
    * 唯一活动 session（`lilishop-go` / `workbuddy/hy4-preview-f`）出现**正文**循环。
    * 旧实现只在 reasoning 分支调 `observe`，正文分支从不调用 → 正文循环**完全
@@ -658,7 +658,7 @@ export async function* consumeOpenAiSse(
           && data.code !== undefined
           && typeof data.message === 'string'
         ) {
-          // ⚠️ **排队识别：绝不能拿顶层 `code` 当门禁**（真实缺陷，用户报障
+          // ⚠️ **排队识别：绝不能拿顶层 `code` 当门禁**（真实缺陷，现场反馈
           // 2026-09-27 的**第三次**回归）。
           //
           // 实测帧（用户贴出的后缀 `(403/model_error)` 反推所得）：
@@ -685,7 +685,7 @@ export async function* consumeOpenAiSse(
               },
             )
           }
-          // ⚠️ **额度用尽必须归为不可重试**（真实缺陷，用户报障 2026-09-27）：
+          // ⚠️ **额度用尽必须归为不可重试**（真实缺陷，2026-09-27 现场反馈）：
           // 帧形如 `{code:110, message:"Billing daily count exceeded",
           // type:"model_error"}`，原先落到下面的 `SERVER` —— 而 `SERVER` **在**
           // harness 的 `DEFAULT_RETRYABLE_CODES` 里，于是「今日额度已用尽」这种
@@ -868,7 +868,7 @@ export async function* consumeOpenAiSse(
           }
           const fragment = call.function?.arguments ?? ''
           block.text += fragment
-          // ⚠️ **名称为空前不发射任何 chunk**（2026-09-23 定位，用户报障）。
+          // ⚠️ **名称为空前不发射任何 chunk**（2026-09-23 定位，现场反馈）。
           //
           // 早期在这里**立即** `yield block-start` + `tool-call-delta`，名字稍后
           // 才到。可 qoder 偶发一个**永远不带 name** 的 tool-call 分片
@@ -1132,7 +1132,7 @@ export async function* consumeOpenAiSse(
   /**
    * 连接是否**被掐断**：既没有显式 `finish_reason`，也没有收到 `[DONE]`。
    *
-   * ⚠️ 这是「**没有任何报错就中断**」的根治点（用户报障，2026-09-23）。
+   * ⚠️ 这是「**没有任何报错就中断**」的根治点（现场反馈，2026-09-23）。
    * 旧判定把「未收到 finish_reason」与「有工具调用」绑在一起：
    *
    * ```ts
@@ -1157,7 +1157,7 @@ export async function* consumeOpenAiSse(
   /**
    * 正文是否被**上游停止串**掐断（见 `isProseTruncatedByStopString`）。
    *
-   * ⚠️ **用户报障的真实缺陷**（2026-09-27）：「正文引用 `</think>` 导致对话中断」。
+   * ⚠️ **现场反馈的真实缺陷**（2026-09-27）：「正文引用 `</think>` 导致对话中断」。
    * 上游把 `</think>` 当停止串，模型在正文里写它（哪怕包在反引号里）就会被掐断，
    * 但服务端仍报 `finish_reason:"stop"` —— 我们据此判「模型正常答完」，
    * harness 认为本轮已完成 → **没有任何报错就停住**（与 AGENTS.md 记的

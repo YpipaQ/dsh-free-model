@@ -218,7 +218,8 @@ await check('渠道卡分组：已接入在前、未接入在后，组内保持�
   const ids = CHANNEL_PROVIDERS.map(row => row.id)
   // 原顺序是硬编码的产品编排（codearts → buddy → … → accio），必须保持不变
   assert.equal(ids[0], 'codearts', '原顺序第一位应是 codearts')
-  assert.equal(ids[ids.length - 1], 'accio', '原顺序最后一位应是 accio')
+  assert.equal(ids[ids.length - 1], 'doubao', '原顺序最后一位应是 doubao（2026-11-23 新增）')
+  assert.equal(ids[ids.length - 2], 'accio', 'doubao 之前应是 accio')
 
   const labels = { on: 'ON', off: 'OFF' }
   // 场景：前三个（codearts / buddy / workbuddy）已接入 —— 与用户截图一致

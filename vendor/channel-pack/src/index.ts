@@ -69,6 +69,7 @@ import { GEMINI } from './gemini.js'
 // 不读本机 `credentials.enc`、不需要 DPAPI、不需要 SecurityGuard 签名（实测）。
 import { AccioAuth } from './accio-auth.js'
 import { registerAccioLlm } from './accio-adapter.js'
+import { registerDoubaoLlm, type DoubaoAdapter } from './doubao-adapter.js'
 import { ACCIO } from './accio-product.js'
 import type { AccioCredential } from './accio.js'
 import type { GeminiCredential } from './gemini.js'
@@ -100,6 +101,15 @@ export { serializeTraeMessagesForTest } from './trae-adapter.js'
 export { sanitizeToolSchema as sanitizeToolSchemaForTest } from './buddy-adapter.js'
 // ⚠️ **仅供离线套件**：续期判据三腿（access / refresh 寿命 / 保活）。
 export { shouldRefreshNow, KEEPALIVE_MAX_IDLE_MS } from './expiry-sync.js'
+// ⚠️ **仅供离线套件**：豆包渠道的设备身份派生 / DSML 流式归一化 / 签到排除表。
+export {
+  doubaoDerivedDeviceIdentity,
+  doubaoDeviceIdentityOf,
+  parseDoubaoCredential,
+  sessionIdFromCookie,
+} from './doubao.js'
+export { createDsmlMarkerNormalizer, fixDsmlMarkers } from './sse.js'
+export { isAutoCheckinExcluded } from './auto-checkin.js'
 // ⚠️ **仅供离线套件**：ZCode 的 system 块构造与调用方 system 注入。
 // 「system 数组恒为 3 块」是上游实测的硬约束（第 4 块 ⇒ 405 + 3012），
 // 只能靠产出物验证，故暴露给套件直接调用。
@@ -149,7 +159,7 @@ function lazyOpencodeUserAgent(): () => string {
  *
  * ⚠️ 桌面版实测：到 `opencode.ai` 的 fetch 可能**永不 settle**（宿主网络
  * 异常），而 `loadOpencodeCatalog` 的兜底分支只有在内层 Promise **结束**
- * 后才可能执行。挂死时模型列表与用量徽标会同时空白（用户报障 2026-10-02）。
+ * 后才可能执行。挂死时模型列表与用量徽标会同时空白（现场反馈 2026-10-02）。
  * 8 秒足够覆盖正常路径（实测首字节 720ms 量级），又不会让 UI 干等太久。
  */
 const OPENCODE_CATALOG_TIMEOUT_MS = 8_000
@@ -616,7 +626,7 @@ export function apply(ctx: Context, config: { disableOpencode?: boolean; outlet?
    *
    * ## 它修的是什么（真实缺陷，2026-10-03）
    *
-   * 用户报障：`/compact` 连续四次报
+   * 现场反馈：`/compact` 连续四次报
    * 「Compaction could not produce a useful summary」，会话日志里 `compaction/end`
    * 携带的真实错误却是 `buddy: no usable credential; log in from the Channel Pack
    * panel first` —— 而当时 Channel Pack 里 buddy 账号**已登录、已启用**，只是它被
@@ -746,7 +756,7 @@ export function apply(ctx: Context, config: { disableOpencode?: boolean; outlet?
         displayName: 'WorkBuddy',
         modelId,
         // 免费模型跳过「锁定 + 临期积分」这道门（判据见 BuddyAdapter.isFreeModel）。
-        // 用户报障「账户可用却提示没有可用账号」正是缺了这一条：免费模型不扣积分，
+        // 现场反馈「账户可用却提示没有可用账号」正是缺了这一条：免费模型不扣积分，
         // 却被永久积分锁定拦下。
         isFreeModel: await workbuddyAdapter.isFreeModel(modelId),
       })
@@ -986,7 +996,7 @@ export function apply(ctx: Context, config: { disableOpencode?: boolean; outlet?
       // ⚠️ `modelId` 必须透传：限流是**按模型**记的（`modelRateLimits[model]`），
       // 传空串会让 `getAvailableAccount` 的限流过滤整体短路
       //（`if (modelId.length === 0) return true`）→ 被标记限流的账号仍被选中，
-      // 换号形同虚设（用户报障「没有切换」的根因之一）。
+      // 换号形同虚设（现场反馈「没有切换」的根因之一）。
       const available = await pool.getAvailableAccount(TRAE.id, modelId ?? '')
       // Token 账本（第 2 期）：回报「本笔请求解析出的账号」。
       if (available) {
@@ -1034,7 +1044,7 @@ export function apply(ctx: Context, config: { disableOpencode?: boolean; outlet?
    * **实际返回的那个账号**，不能事后自己再查一次池 —— 池的选号是即时决策，
    * 与适配器本次拿到的凭据可能已经不是一个账号。
    *
-   * ⚠️ 真实缺陷（用户报障「请求记录中数据空白」）：此处曾**完全没有**这个通道，
+   * ⚠️ 真实缺陷（现场反馈「请求记录中数据空白」）：此处曾**完全没有**这个通道，
    * 适配器只好退回记凭据里的 `account_id`（`usr-…`），而面板按池 id
    * （`cline-bb211a53`）过滤 → 两个 id 空间不一致 → 表格永远空白。
    */
@@ -1054,7 +1064,7 @@ export function apply(ctx: Context, config: { disableOpencode?: boolean; outlet?
       // Token 账本（第 2 期）：回报「本笔请求解析出的账号」（空串不回报）。
       if (activeClineAccountId.length > 0) reportLedgerAccount(CLINE.id, activeClineAccountId)
       if (available) return available.credential as ClineCredential
-      // ⚠️ 与 buddy / workbuddy 同因（真实缺陷，2026-10-03 用户报障）：
+      // ⚠️ 与 buddy / workbuddy 同因（真实缺陷，2026-10-03 现场反馈）：
       // 唯一的 cline 账号被**模型级限流**标记挡住时，候选会筛成空集，最终降级成
       // `cline: no usable credential; log in first` —— 凭据明明在、账号也登录着，
       // 用户却被指去重新登录，方向完全错。故必须在退到单凭据 ref **之前**
@@ -1124,7 +1134,7 @@ export function apply(ctx: Context, config: { disableOpencode?: boolean; outlet?
    * ⚠️ **为什么需要它**（真实缺陷）：实测 Loomy 的今日赠送额度（每天 5000）
    * 耗尽后，服务端**继续扣永久积分且不报错** —— 「耗尽」是**静默降级**而非错误。
    * 而本插件既有的「限流 → 换号」只在服务端返回限流错误时触发，
-   * 故对 Loomy **完全无效**：会一直烧同一个号（用户报障）。
+   * 故对 Loomy **完全无效**：会一直烧同一个号（现场反馈）。
    *
    * 策略：优先有今日额度的号 → 其次有永久积分的号 → 都无/查不到排最后。
    * 档内保持手动拖拽顺序（详见 `loomy-balance-rank.ts`）。
@@ -1182,7 +1192,7 @@ export function apply(ctx: Context, config: { disableOpencode?: boolean; outlet?
           // ⚠️ **锁定时绝不可落到下面的单凭据兜底** —— 那会绕过锁定、
           // 照样消耗永久积分，锁定形同虚设。这里直接抛明确错误（用户要求）。
           //
-          // ⚠️ **必须区分「真的用尽」与「查不到」**（真实缺陷，用户报障
+          // ⚠️ **必须区分「真的用尽」与「查不到」**（真实缺陷，现场反馈
           // 2026-09-29）：曾把两者混成一句「今日额度都已用尽」，于是
           // **一次网络抖动**就让用户被告知"钱花完了"（实测当时 4 个号里
           // 3 个还有 4965/5000/5000）—— 用户会去解锁或白等一天，而号其实有钱。
@@ -1953,7 +1963,7 @@ const zcodeAdapter = registerZcodeLlm(ctx, {
       // Proxy —— 它对**其余成员原样透传并绑定 this** ⇒ 新方法自动透出。
       await refreshCatalogsOnce({
         adapters: modelAdapters,
-        // ⚠️ 闸门：**没配账号的渠道不刷**（2026-11-09 用户报障：未配 cline 账号，
+        // ⚠️ 闸门：**没配账号的渠道不刷**（2026-11-09 现场反馈：未配 cline 账号，
         // 却每 30 分钟刷「models.dev 拉取失败 / 无可用凭据」两条 warn）。
         // 判据是 `hasLoggedInAccount(provider)`；能力缺失时传 undefined ⇒ 照旧刷新。
         hasAccount: typeof (pool as { hasLoggedInAccount?: unknown }).hasLoggedInAccount === 'function'
@@ -2176,7 +2186,7 @@ const zcodeAdapter = registerZcodeLlm(ctx, {
       // ⚠️⚠️ **必须有超时**（真机事故 2026-10-02）：桌面版到 opencode.ai 的
       // fetch 可能**永不 settle**（与同源的 remote.session 故障都是宿主网络问题）。
       // 没有超时 → `loadOpencodeCatalog` 的 try/catch 永远走不到 →
-      // `listModels` 永不返回 → **模型列表与徽标同时空白**（用户报障）。
+      // `listModels` 永不返回 → **模型列表与徽标同时空白**（现场反馈）。
       // 有超时则超时后回退兜底表，UI 立刻可用（只是暂时看不到付费模型）。
       fetchRemoteCatalog: (slot, signal) => fetch(`${OPENCODE.baseUrl}${OPENCODE.modelsPath}`, {
         headers: { authorization: `Bearer ${slot.apiKey}` },
@@ -2224,7 +2234,7 @@ const zcodeAdapter = registerZcodeLlm(ctx, {
     // ⚠️⚠️ **两条硬约定**（真机事故 2026-10-02）：
     // 1. 渲染路径上**只读同步缓存**，永不 await 网络 —— 我最初在 `listModels`
     //    里 await 这个拉取，而它 5 MB / 慢则 1.4s、宿主网络异常时**永不返回**，
-    //    于是模型选择器一直空白（用户报障「一直卡着」）。
+    //    于是模型选择器一直空白（现场反馈「一直卡着」）。
     // 2. 拉取完成要**广播目录变更**：能力表是能力判定的来源，DSH 已经用
     //    「纯文本」渲染过一帧，不广播它不会重算（免费模型会一直显示不支持图片）。
     //
@@ -2279,6 +2289,36 @@ const zcodeAdapter = registerZcodeLlm(ctx, {
   //   3. 但 **token 必须放 body 的 `token` 字段** —— 放 `Authorization` 头恒
   //      **流内 402**（HTTP 仍是 200 ⇒ 不看流内 `error_code` 会误判成「成功但没内容」）。
   const accio = new AccioAuth(ctx, { fetcher: network.fetch })
+  // ===== 豆包（doubao）—— 网页端私有协议（额度 / 模型目录 / 对话） =====
+  //
+  // 凭据是浏览器扫码登录得到的 cookie 串，**没有 refresh 端点**。
+  // 设备身份由 `doubao.ts` 的确定性派生给出（实测通过风控，无需装豆包客户端）。
+  //
+  // ⚠️ 凭据槽由 `slots()` 现场遍历账号池给出，而不是单个 `resolveCredential` ——
+  // 豆包的对话/额度/目录都要**指定账号**（多账号轮换由适配器内部处理）。
+  const doubaoAdapter: DoubaoAdapter = registerDoubaoLlm(ctx, {
+    credentialRef: credentialRef('DOUBAO_ACCOUNT'),
+    slots: async () => {
+      const entries = await pool.listAccounts('doubao')
+      const out: { accountId: string; credential: import('./doubao.js').DoubaoCredential }[] = []
+      for (const entry of entries) {
+        if (!entry.enabled) continue
+        const resolved = await ctx.credentials.resolve(credentialRef(entry.credentialRef))
+        if (!resolved) continue
+        try {
+          const parsed = JSON.parse(resolved.value) as { cookie?: unknown }
+          if (typeof parsed !== 'object' || parsed === null
+            || typeof parsed.cookie !== 'string' || parsed.cookie.length === 0) continue
+          out.push({ accountId: entry.id, credential: parsed as import('./doubao.js').DoubaoCredential })
+        } catch { /* 坏凭据跳过，不影响其它账号 */ }
+      }
+      return out
+    },
+    accountPool: pool,
+    onCatalogLoaded: () => { broadcastCatalogChanged(ctx) },
+    warn: (message) => ctx.logger.warn(message),
+  })
+
   const accioAdapter = registerAccioLlm(ctx, {
     // ⚠️ provider 实参用 ACCIO.id 而非字面量（同 minimax / gemini 的既有约定）。
     // ⚠️ `modelId` 必须透传：否则模型级限流标记被忽略（见 buddy 处说明）。
@@ -2414,6 +2454,7 @@ const zcodeAdapter = registerZcodeLlm(ctx, {
     gemini: pruned(GEMINI.id, geminiAdapter),
     officeace: pruned(OFFICEACE.id, officeAceAdapter),
     accio: pruned(ACCIO.id, accioAdapter),
+    doubao: pruned('doubao', doubaoAdapter),
     zcode: pruned(ZCODE.id, zcodeAdapter),
     ...(opencodeAdapter === undefined ? {} : { opencode: pruned(OPENCODE.id, opencodeAdapter) }),
   }

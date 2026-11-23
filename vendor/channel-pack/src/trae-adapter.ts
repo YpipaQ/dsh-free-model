@@ -224,7 +224,7 @@ export interface TraeAdapterOptions {
    * （`modelRateLimits[model]`），传空串会让 `getAvailableAccount` 的限流
    * 过滤整体短路（`if (modelId.length === 0) return true`）—— 于是适配器
    * 刚写下的限流标记，下次选号时被完全忽略，**换号形同虚设**
-   * （用户报障「没有切换」的两个根因之一）。
+   * （现场反馈「没有切换」的两个根因之一）。
    *
    * 与 `LoomyAdapterOptions.resolveCredential` 同款（那里是既有正确实现）。
    */
@@ -494,7 +494,7 @@ function serializeTraeMessages(
     // tool 消息是「紧跟其 assistant `tool_calls` 的应答」，两者之间插任何消息
     // （哪怕只是本消息的正文或图片）都会被拒。
     //
-    // **真实缺陷**（2026-10-04 用户报障）：`read_image`（工具结果内嵌图片）之后，
+    // **真实缺陷**（2026-10-04 现场反馈）：`read_image`（工具结果内嵌图片）之后，
     // 整条会话在 trae 下**永久无法对话** —— 上游恒定回
     // `code=4027 Messages with role 'tool' must be a response to a preceding message
     // with 'tool_calls'`；坏报文已落进会话历史，每次请求原样重放，5 次重试与
@@ -624,7 +624,7 @@ function isTransportError(error: unknown): boolean {
  *
  * composer 的模型切换菜单**只渲染 `name`**（`dsh-client-ui-model-selection` 的
  * ModelSelect 里只有 `title: model.name` 与 `children: model.name`），
- * `description` **完全不读**。用户报障「消耗倍率没有显示在切换模型列表的后面」
+ * `description` **完全不读**。现场反馈「消耗倍率没有显示在切换模型列表的后面」
  * 正是因为早期版本放进了 `description`。
  *
  * 安全性：`name` **纯属展示** —— DSH 的选择与持久化只用 `id`，故附加价格不会
@@ -889,7 +889,7 @@ export class TraeAdapter extends LlmAdapter {
    * `listModels` 会按用户黑名单过滤（Channel Pack「显示列表」开关），于是**被关闭的
    * 模型不在其返回值里**。而设置页必须把关闭的模型也渲染出来（否则用户无法重新
    * 打开），RPC 层只能凭黑名单的 key（裸 id）补回 —— 那条路径拿不到展示名，
-   * 只能回退成裸 id，**倍率与模型显示名随之丢失**（用户报障：「关闭的就没有显示
+   * 只能回退成裸 id，**倍率与模型显示名随之丢失**（现场反馈：「关闭的就没有显示
    * 倍率，关闭的应该也显示倍率」）。
    *
    * 故这里提供「不过滤黑名单」的目录，由 `model.list` 端点使用：它据此拿到
@@ -986,7 +986,7 @@ export class TraeAdapter extends LlmAdapter {
     //
     // ⚠️ **必须传 `options.model`**：这是选号主路径，`resolveCredential` 会把
     // 它透传给 `getAvailableAccount` 的 `modelId` 过滤限流账号。传空串等于
-    // 不按模型过滤，限流标记被忽略（用户报障「没有切换」的根因之一）。
+    // 不按模型过滤，限流标记被忽略（现场反馈「没有切换」的根因之一）。
     let credential = await this.options.resolveCredential(options.model)
     if (credential === undefined || isTraeExpired(credential)) {
       await this.options.refresh()
@@ -1019,7 +1019,7 @@ export class TraeAdapter extends LlmAdapter {
     // 远端目录里 `display_config.multimodal` 一直在声明该能力，且直发图片后
     // 模型确实读到了像素（红图答「红色」、蓝图答「蓝色」、无图答「无法确定」）。
     // 早期这里无条件抛错（理由「SOLO 通道不支持图片」），配合 `inputModalities`
-    // 恒为 `['text']`，导致图片在**附件准入阶段**就被 DSH 拒掉（用户报障
+    // 恒为 `['text']`，导致图片在**附件准入阶段**就被 DSH 拒掉（现场反馈
     // Issue #IKHDKC）。
     //
     // 现在：`multimodal !== true` 的模型仍明确报错（实测 `DeepSeek-V4-Pro-Official`
@@ -1362,7 +1362,7 @@ export class TraeAdapter extends LlmAdapter {
     /**
      * **正文**死循环检测（**独立实例**，见 `createReasoningLoopDetector`）。
      *
-     * 真实缺陷（用户报障，2026-09-25）：唯一活动 session 出现**正文**循环，
+     * 真实缺陷（现场反馈，2026-09-25）：唯一活动 session 出现**正文**循环，
      * 而旧实现只在 reasoning 分支调 `observe` → 正文循环完全看不见。
      *
      * ⚠️ 两个实例不可合并：判据看尾部 3000 字符窗口的行去重率，两条通道
@@ -1611,7 +1611,7 @@ export class TraeAdapter extends LlmAdapter {
                   // 见 `traeStreamErrorMessage` 与 README 的 4001 条目）。
                   // 后果：额度类错误在此直接抛 QUOTA_EXCEEDED，**换号代码一行
                   // 都不执行**（它只写在 `if (!response.ok)` 里），而该码不在
-                  // DSH 的可重试集合 → 用户报障「不会切换账号」。
+                  // DSH 的可重试集合 → 现场反馈「不会切换账号」。
                   //
                   // 现在：**未产出任何内容**时抛哨兵码，让外层换号重发；
                   // 已有输出则如实抛真实错误码（绝不重放，防重复计费）。
@@ -1882,7 +1882,7 @@ export class TraeAdapter extends LlmAdapter {
  * 引入 Max 模式（声明 1M tokens）后，写死的 480,000 没跟着涨，与 DSH 的压缩点
  * （`窗口 × 0.8`，1M → 800K tokens ≈ 170 万字符）**脱钩**：界面显示「才用了 8%」，
  * 适配器却每轮静默丢掉约四分之三的历史（真实会话量：1,898,903 字符 = 旧预算的
- * **396%**）。用户报障原文「trae 显示的上下文长度不对」——
+ * **396%**）。现场反馈原文「trae 显示的上下文长度不对」——
  * **那正是这道闸门造成的**，不是任何上游限制造成的。
  *
  * 中间版本把它改成「声明窗口 × 系数」（系数 2 → 5），能让**实测内容**下不再误伤，

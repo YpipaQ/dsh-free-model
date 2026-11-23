@@ -103,7 +103,7 @@ export function isClineFreeModel(
  * ⚠️ **必须写进 `name`，不是 `description`**：composer 的模型切换菜单
  * 只渲染 `name`（`dsh-client-ui-model-selection` 的 ModelSelect 里只有
  * `title: model.name` 与 `children: model.name`，**完全不读 `description`**）。
- * `description` 只在 `/model` 弹窗里用。这是被用户报障纠正过的结论
+ * `description` 只在 `/model` 弹窗里用。这是被现场反馈纠正过的结论
  * （「消耗倍率没有显示在切换模型列表的后面」）。
  *
  * `name` 纯属展示：DSH 的选择与持久化只用 `id`，故附加标记不会污染会话历史。

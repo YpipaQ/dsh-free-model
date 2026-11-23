@@ -55,7 +55,7 @@ export const LOBSTERAI_HARD_CREDIT_MARKERS: readonly string[] = [
   'insufficient credit', 'no credit', 'credit exhausted', 'out of credit',
   'quota exceeded', 'quota exhaust', 'payment required', 'credit not enough',
   'not enough credit', 'freecreditsused', 'free credits used',
-  // 2026-09 补充（真实缺陷，用户报障）：额度耗尽的**实际文案**是
+  // 2026-09 补充（真实缺陷，现场反馈）：额度耗尽的**实际文案**是
   // 「免费额度已用完，请升级套餐」，而早期表里只有「额度用尽」「积分用完」
   // ——「已用完」与「用尽」字面不同，于是这个最主要的失败模式判成 `none`
   // （不换号、不记徽章），用户看到「一个账号用完出错但没有切换」。
@@ -131,9 +131,9 @@ export function classifyLobsteraiError(status: number, body: string): LobsteraiE
  * 该函数的优先级里**状态码排在最前**（402 / 429 / 404 / 4xx / 5xx），
  * 而流内错误的 HTTP 状态是 **200** —— 那些分支全部失效，只剩关键词表可用。
  * 传 200 进去只会得到 `none`（未命中关键词时），而 `none` 意味着
- * **不换号**，正是用户报障的行为。
+ * **不换号**，正是现场反馈的行为。
  *
- * ## 真实缺陷（用户报障）
+ * ## 真实缺陷（现场反馈）
  *
  * 「lobsterai 一个账号用完出错但是没有从账号切换 …… 账号还有 2 个能用的」。
  * 额度耗尽正是以 **HTTP 200 + 流内错误帧** 表达的，而换号循环整体位于
