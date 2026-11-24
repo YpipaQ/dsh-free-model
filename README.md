@@ -7,7 +7,7 @@
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/YpipaQ/dsh-free-model/blob/slim-channels-only/LICENSE)
 
 > [`Ebony-Vinyl/dsh-our-free-model`](https://github.com/Ebony-Vinyl/dsh-our-free-model) **2.1.0**（提交 `7e3a1da`）的精简 fork。
-> 只保留「把外部账号接进来」这一条车道：**十五个账号渠道 + 数据看板 + 运行日志 + 本地网关**。
+> 只保留「把外部账号接进来」这一条车道：**十六个账号渠道 + 数据看板 + 运行日志 + 本地网关**。
 > 上游的匿名免费车道、EAC 协付车道、聚合渠道、省 Token、路由与发布/更新通道全部移除。
 >
 > ⚠️ fork 父仓库**已走到 2.3.0**，但它的后续改动几乎全在被删掉的那些车道里；
@@ -69,10 +69,23 @@ dsh plugin --profile web add dsh-our-free-model         # 回滚到上游 2.1.0
 
 | 页面 | 作用 |
 | --- | --- |
-| **白嫖模型接入** | 十五张渠道卡：CodeArts、CodeBuddy / WorkBuddy（国内 + 国际）、LobsterAI、Qoder / Qoder CN、TRAE、Cline、Loomy、Raccoon、MiniMax Code、ZCode、Gemini、**OfficeAce**（华为云 ModelArts，云端直连、无需装客户端）、**Accio Work**（阿里，标准 OAuth + PKCE，可脱离 IDE）。浏览器登录、账号池、续期、积分查询与一键领取、每日自动签到、逐模型开关、余额查询。 |
+| **白嫖模型接入** | 十六张渠道卡：CodeArts、CodeBuddy / WorkBuddy（国内 + 国际）、LobsterAI、Qoder / Qoder CN、TRAE、Cline、Loomy、Raccoon、MiniMax Code、ZCode、Gemini、**OfficeAce**（华为云 ModelArts，云端直连、无需装客户端）、**Accio Work**（阿里，标准 OAuth + PKCE，可脱离 IDE）、**豆包**（字节，网页端私有协议）。浏览器登录、账号池、续期、积分查询与一键领取、每日自动签到、逐模型开关、余额查询。 |
 | **数据看板** | 渠道包自己的逐请求 Token 账本：今日 / 全部消耗、平均生成速度、首字延迟、缓存命中率、成功率、账号透视、模型性能表。 |
 | **运行日志** | 逐条请求明细：结果、耗时、首字、速度、Token 细分；失败行悬停看原因。 |
 | **网关设置** | 渠道包的本地 OpenAI 兼容网关（开关、端点、密钥、模型数）+ 本插件的局域网中继（可选绑定地址/端口、独立中继密钥、轮换）+ 出口代理分区（订阅分流或单个 http/socks5 出口）。 |
+
+## 各渠道的已知限制
+
+不是所有渠道的能力都一样。下表只列**会影响实际使用**的差异：
+
+| 渠道 | 限制 | 原因 |
+|---|---|---|
+| **豆包** | **签到未实现**；模型能力**未真机验证** | 签到需 `a_bogus` 签名 + CDP 页面会话拉起浏览器，本版本不移植该路径（已加入自动签到排除表，**手动签到**同样不可用）。协议照上游实现，但开发环境无豆包账号 ⇒ 未经实测 |
+| **ZCode** | **自动签到默认关闭** | 每次领取都要现场产阿里云 captcha（会拉起 headful Chromium，且按设备限流）。面板里可手动领取 |
+| **OfficeAce / Accio** | 与其余渠道**同构**，无特殊限制 | — |
+
+⚠️ 「自动签到」只覆盖**有签到接口且无代价**的渠道；有代价的渠道（如 ZCode、豆包）一律排除，
+不会在后台尝试。
 
 ## 移除了什么，以及为什么
 
@@ -88,7 +101,7 @@ dsh plugin --profile web add dsh-our-free-model         # 回滚到上游 2.1.0
 | `packages/standalone/`（独立 Web 产品）、`worker/`（EAC 的 Cloudflare 授权网关）、`feed/` + `catalog/`（公告源与发布清单） | 三块卫星全部 `import` 被删车道，留着就是一套永远跑不起来的代码。 |
 
 规模变化：`src/` 从 **58 个模块 → 5 个**（`store/key/chan-relay/egress/trust`），宿主 `index.js` 从
-**2343 行 → 684 行**，浏览器半身 `client.js` 从 **5992 行 → 2531 行**，离线测试从 45 个套件 → **32 个**。
+**2343 行 → 684 行**，浏览器半身 `client.js` 从 **5992 行 → 2595 行**，离线测试从 45 个套件 → **32 个**。
 界面里所有 `animation` 与 `@keyframes` 也已删除。
 
 ## 配置
@@ -153,7 +166,7 @@ node scripts/client-lint.mjs         # 只跑浏览器半身（字典键一一�
 | `client-render` | 四个页面用宿主形状的 payload 真渲染一遍（终态树，防「引用了已删组件」） |
 | `host-smoke` | 宿主 HTTP 面全量：四个页面的数据、出口校验、中继密钥生成/轮换/落盘、**被删路由必须 404** |
 | `trust` / `chan-relay` / `egress` | 三个宿主模块各自的契约 |
-| `channel-pack` / `channel-network` | 渠道包挂载、十五个 provider 注册、积分、图片计价、代理与 OAuth 生命周期 |
+| `channel-pack` / `channel-network` | 渠道包挂载、十六个 provider 注册、积分、图片计价、代理与 OAuth 生命周期 |
 | `channel-model-metadata` | 选择器读到的模型元数据：WorkBuddy 五档档位、Loomy `spark-x` 窗口（**远端与兜底两条路径都测**）、档位声明顺序与默认档不翻转 |
 | `channel-catalog` / `channel-catalog-heal` | 目录落地广播、`got` 与 `complete` 分离、冷启动有界预热；以及**残缺目录能否自愈**（真装配适配器，先残缺后完整） |
 | `channel-gateway-source` | 网关自造消息的 `source.kind` 落在 `dsh-llm` 的模块增强词汇表内（**真起网关 + 真 HTTP 请求**，从 `stream()` 入参读回合成消息） |
@@ -219,7 +232,7 @@ npm run channel-pack      # 从 vendor/channel-pack/src 重新打包（需要 es
 
 ### ② 渠道与模型数据：`Jet` 的渠道包（真上游）
 
-`vendor/channel-pack/` 里**十五个账号渠道的登录、账号池、凭据续期、积分领取、
+`vendor/channel-pack/` 里**十六个账号渠道的登录、账号池、凭据续期、积分领取、
 模型黑名单与 OpenAI 网关**全部出自同一个上游项目 —— 那才是本插件真正的价值所在：
 
 - **Gitee 仓库**：`iJetLi/deepseek-harness-codearts`（上游现已更名为 **`dsh-providers-hub`**）

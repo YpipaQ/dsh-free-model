@@ -7,7 +7,7 @@
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/YpipaQ/dsh-free-model/blob/slim-channels-only/LICENSE)
 
 > A trimmed fork of [`Ebony-Vinyl/dsh-our-free-model`](https://github.com/Ebony-Vinyl/dsh-our-free-model) **2.1.0** (commit `7e3a1da`).
-> One lane survives: **bring your own account channels** — fifteen providers, plus a token dashboard,
+> One lane survives: **bring your own account channels** — sixteen providers, plus a token dashboard,
 > a per-request log and a local gateway. Upstream's anonymous free lane, the EAC co-paid lane, the
 > aggregate lane, the token savers, the routing chains and the whole release/update channel are gone.
 >
@@ -75,10 +75,23 @@ Four settings pages (down from nine):
 
 | Page | What it does |
 | --- | --- |
-| **Free channels** | Fifteen account cards — CodeArts, CodeBuddy / WorkBuddy (CN + intl), LobsterAI, Qoder / Qoder CN, TRAE, Cline, Loomy, Raccoon, MiniMax Code, ZCode, Gemini, **OfficeAce** (Huawei Cloud ModelArts, cloud-direct, no client install) and **Accio Work** (Alibaba, standard OAuth + PKCE, IDE-free): browser login, account pool, renewal, credit lookup and one-click claim, daily auto check-in, per-model switches, balance. |
+| **Free channels** | Sixteen account cards — CodeArts, CodeBuddy / WorkBuddy (CN + intl), LobsterAI, Qoder / Qoder CN, TRAE, Cline, Loomy, Raccoon, MiniMax Code, ZCode, Gemini, **OfficeAce** (Huawei Cloud ModelArts, cloud-direct, no client install), **Accio Work** (Alibaba, standard OAuth + PKCE, IDE-free) and **Doubao** (ByteDance, web private protocol): browser login, account pool, renewal, credit lookup and one-click claim, daily auto check-in, per-model switches, balance. |
 | **Dashboard** | The pack's own per-request token ledger: today / all-time usage, average throughput, TTFT, cache hit rate, success rate, account pivot, per-model table. |
 | **Request log** | Every request in detail: result, duration, TTFT, speed, token breakdown; hover a failed row for the reason. |
 | **Gateway** | The pack's local OpenAI-compatible gateway (switch, endpoint, key, model count), this plugin's LAN relay (bind address/port, its own key, rotation), and the egress-outlet section. |
+
+## Known per-channel limitations
+
+Not every channel has the same capabilities. Only differences that **affect real use** are listed:
+
+| Channel | Limitation | Reason |
+|---|---|---|
+| **Doubao** | **No check-in**; capabilities **not verified against the live service** | Check-in needs `a_bogus` signing plus a CDP page session that launches a browser; that path is not ported (Doubao is excluded from auto check-in, and manual check-in is unavailable too). The protocol follows the upstream implementation, but no Doubao account was available ⇒ untested here |
+| **ZCode** | **Auto check-in is off by default** | Every claim mints an Aliyun captcha (headful Chromium, rate-limited per device). Manual claim is available in the panel |
+| **OfficeAce / Accio** | Same shape as every other channel, no special limits | — |
+
+⚠️ "Auto check-in" only covers channels with a check-in endpoint that costs nothing. Channels
+whose check-in has a cost (ZCode, Doubao) are excluded and are never attempted in the background.
 
 ## What was removed and why
 
@@ -94,7 +107,7 @@ Four settings pages (down from nine):
 | `packages/standalone/`, `worker/`, `feed/`, `catalog/` | All three satellite products `import` the deleted lane; keeping them means shipping code that can never run. |
 
 Sizes: `src/` went from **58 modules to 5** (`store/key/chan-relay/egress/trust`), the host `index.js`
-from **2343 to 684 lines**, the browser half `client.js` from **5992 to 2538 lines**, and the offline
+from **2343 to 684 lines**, the browser half `client.js` from **5992 to 2595 lines**, and the offline
 suites from 45 to **32**. Every `animation` and `@keyframes` rule is gone as well.
 
 ## Configuration
@@ -143,7 +156,7 @@ the browser half talks to it over the shell's `connection` RPC (`usage.tokenLedg
 - **Credentials**: account tokens live in the pack's own credential store (`~/.dsh/.credentials.yaml`, 0600); the page never sees plaintext. The subscription URL is treated as a credential and read only when you ask to display it — ordinary payloads carry a masked host.
 - **The LAN relay is the only listener facing outward**: off by default; when on it requires its own relay key (not shared with the local gateway key). **Anyone who can reach this machine can spend your channel quota** — enable it only on a trusted network, and firewall the source range if in doubt.
 - **Trust fence**: the plugin's routes outrank the kernel's `/api`, so it carries the same admission check as the kernel — it reuses the composition's `connection` service when present, and otherwise falls back to a structural fence (loopback `Host`, no cross-site marker, same-origin `Origin`/`Referer`).
-- **Egress audit**: see [`SECURITY-AUDIT.md`](https://github.com/YpipaQ/dsh-free-model/blob/slim-channels-only/SECURITY-AUDIT.md) — the verdict is **direct to each provider, no third-party relay, no telemetry**; it lists the fifteen providers' hosts with their TLS certificate subjects, the two non-vendor calls that carry no credentials, the local surface and the known risks. Re-run it with `node scripts/egress-audit.mjs --tls` (read-only; `--json` for machine output).
+- **Egress audit**: see [`SECURITY-AUDIT.md`](https://github.com/YpipaQ/dsh-free-model/blob/slim-channels-only/SECURITY-AUDIT.md) — the verdict is **direct to each provider, no third-party relay, no telemetry**; it lists the sixteen providers' hosts with their TLS certificate subjects, the two non-vendor calls that carry no credentials, the local surface and the known risks. Re-run it with `node scripts/egress-audit.mjs --tls` (read-only; `--json` for machine output).
 
 ## Tests
 
@@ -159,7 +172,7 @@ node scripts/client-lint.mjs         # the browser half only (dictionary keys, C
 | `client-render` | The four pages rendered for real against host-shaped payloads (catches references to deleted components) |
 | `host-smoke` | The whole host HTTP surface: the four pages' data, outlet validation, relay key minting/rotation/persistence, **and that deleted routes 404** |
 | `trust` / `chan-relay` / `egress` | Each host module's own contract |
-| `channel-pack` / `channel-network` | Pack mounting, fifteen provider registrations, credits, image pricing, proxy and OAuth lifecycles |
+| `channel-pack` / `channel-network` | Pack mounting, sixteen provider registrations, credits, image pricing, proxy and OAuth lifecycles |
 | `channel-model-metadata` | The model metadata the picker reads: WorkBuddy's five efforts, Loomy `spark-x`'s window (**both the remote and fallback paths**), and the declared effort order with a default that must not flip |
 | `channel-catalog` / `channel-catalog-heal` | Catalog-landing broadcast, `got` vs `complete`, bounded cold-start prewarm, and whether a **partial catalog heals** (real adapter, partial then complete) |
 | `channel-gateway-source` | The gateway's synthesized messages carry a `source.kind` inside `dsh-llm`'s module-augmented vocabulary (**real gateway + real HTTP request**, read back from the `stream()` argument) |
@@ -229,7 +242,7 @@ precedent**. The reasoning and the measurements are in the
 
 ### ② Channel and model data: Jet's channel pack (the true upstream)
 
-Everything in `vendor/channel-pack/` — **the fifteen account channels' login, account pools,
+Everything in `vendor/channel-pack/` — **the sixteen account channels' login, account pools,
 credential renewal, credit claiming, model blacklists and the OpenAI gateway** — comes from one
 upstream project. That is where this plugin's actual value lives:
 
