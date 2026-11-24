@@ -32169,6 +32169,12 @@ function resolveHideWithoutAccountFlag(raw) {
   return !(value === "0" || value === "false" || value === "no" || value === "off");
 }
 
+// vendor/channel-pack/src/cache-key.ts
+function resolveCacheKey(sessionId, fallback) {
+  if (typeof sessionId === "string" && sessionId.length > 0) return sessionId;
+  return fallback;
+}
+
 // vendor/channel-pack/src/model-queue.ts
 var QUEUE_BUSINESS_CODE = "10605";
 var BILLING_BUSINESS_CODE = "110";
@@ -33940,14 +33946,22 @@ var CodeArtsAdapter = class extends LlmAdapter {
     this.options = options;
     this.fetchImpl = options.fetchImpl ?? fetch;
     this.chatId = options.chatId ?? crypto.randomUUID().replace(/-/g, "");
-    this.sessionId = options.sessionId ?? crypto.randomUUID().replace(/-/g, "");
+    this.fallbackSessionId = options.sessionId ?? crypto.randomUUID().replace(/-/g, "");
     this.catalogGate = new RemoteCatalogGate(
       options.onCatalogLoaded === void 0 ? {} : { onLoaded: options.onCatalogLoaded }
     );
   }
   fetchImpl;
   chatId;
-  sessionId;
+  /**
+   * 前缀缓存会话标识的**兜底值**（进程级随机）。
+   *
+   * ⚠️ 只在调用方**没有**下发 `GenerateOptions.sessionId` 时使用。真实会话
+   * 标识必须逐请求取（见 `cacheKeyFor`）——把它当实例常量会让整个进程共用
+   * 一个随机 key，多会话前缀不同却抢同一桶，服务端反复逐出彼此的缓存 ⇒
+   * 命中率随并发会话数塌陷（与 buddy-adapter 同款缺陷）。
+   */
+  fallbackSessionId;
   /**
    * 描述本适配器拥有的 provider 路由。
    *
@@ -34056,6 +34070,25 @@ var CodeArtsAdapter = class extends LlmAdapter {
     };
     return resolved;
   }
+  /**
+   * 解析本次请求应使用的会话标识（`prompt_cache_key` 与 `Session-Id` 头共用）。
+   *
+   * ⚠️ **必须逐请求取 `options.sessionId`**，不能读实例常量。
+   *
+   * `GenerateOptions.sessionId` 由 `dsh-agent-loop` 在每轮请求时填入
+   * （`sessionId: this.session.id`），是 DSH 的真实会话标识：同一会话内稳定、
+   * 跨会话天然不同 —— 正是前缀缓存需要的分桶键。
+   *
+   * 早期实现把它在构造期固化成实例常量，导致整个进程共用一个随机 key：
+   * 多个会话前缀不同却抢同一个桶，服务端反复逐出彼此的缓存 ⇒ 命中率随并发
+   * 会话数塌陷（buddy-adapter 上实测 24.4% vs 单会话 98.4%）。
+   *
+   * 兜底：调用方未下发 `sessionId`（非 agent-loop 的一次性调用）时退回进程级
+   * 随机值，行为与改动前一致。
+   */
+  cacheKeyFor(options) {
+    return resolveCacheKey(options.sessionId, this.fallbackSessionId);
+  }
   async prepareCall(provider, model, signal) {
     return {
       model: { ...await this.resolveModel(provider, model, signal), inputModalities: ["text"] },
@@ -34106,7 +34139,10 @@ var CodeArtsAdapter = class extends LlmAdapter {
       stream: true,
       // prompt_cache_key 让服务端启用前缀缓存并在 usage 中返回 cached_tokens，
       // 缺少该字段时缓存命中恒为 0（实测 2026-08-24）。
-      prompt_cache_key: this.sessionId,
+      //
+      // ⚠️ 取**逐请求**的会话标识，不能读实例常量 —— 后者会让全进程共用一个
+      // 随机 key，多会话互相逐出缓存（见 `cacheKeyFor` 的归因说明）。
+      prompt_cache_key: this.cacheKeyFor(options),
       // include/reasoning_summary 对齐 Rust 端 CodeArtsExtraFields，
       // 让服务端返回加密 reasoning 内容与摘要。
       include: ["reasoning.encrypted_content"],
@@ -34158,7 +34194,7 @@ var CodeArtsAdapter = class extends LlmAdapter {
       });
       headers.set("Content-Type", "application/json");
       headers.set("Chat-Id", this.chatId);
-      headers.set("Session-Id", this.sessionId);
+      headers.set("Session-Id", this.cacheKeyFor(options));
       headers.set("lang", "en");
       response = await this.fetchImpl(url, {
         method: "POST",
@@ -34609,7 +34645,7 @@ var CodeArtsAdapter = class extends LlmAdapter {
    *   或返回无法识别的载荷时返回 `undefined`。
    */
   async queryQueueStatus(credential, model, signal) {
-    const url = `${QUEUE_STATUS_BASE}?model=${encodeURIComponent(model)}&task_id=${encodeURIComponent(this.sessionId)}`;
+    const url = `${QUEUE_STATUS_BASE}?model=${encodeURIComponent(model)}&task_id=${encodeURIComponent(this.fallbackSessionId)}`;
     const signed = await signRequestHuawei(
       credential.access_key_id,
       credential.secret_access_key,
@@ -35401,7 +35437,7 @@ var BuddyAdapter = class _BuddyAdapter extends LlmAdapter2 {
     this.options = options;
     this.product = options.product ?? CODEBUDDY;
     this.fetchImpl = options.fetchImpl ?? fetch;
-    this.sessionId = options.sessionId ?? crypto.randomUUID().replace(/-/g, "");
+    this.fallbackSessionId = options.sessionId ?? crypto.randomUUID().replace(/-/g, "");
     this.catalogGate = new RemoteCatalogGate({
       ...options.now === void 0 ? {} : { now: options.now },
       ...options.catalogCooldownMs === void 0 ? {} : { cooldownMs: options.catalogCooldownMs },
@@ -35417,10 +35453,15 @@ var BuddyAdapter = class _BuddyAdapter extends LlmAdapter2 {
   product;
   fetchImpl;
   /**
-   * 前缀缓存会话标识（prompt_cache_key）。同一会话内所有请求复用同一 key，
-   * 服务端据此把相同前缀的 KV 缓存跨请求复用；缺失时缓存命中恒为 0。
+   * 前缀缓存会话标识的**兜底值**（进程级随机）。
+   *
+   * ⚠️ 只在调用方**没有**下发 `GenerateOptions.sessionId` 时使用。真实会话标识
+   * 必须逐请求取（见 `cacheKeyFor`）——把它当实例常量是本适配器曾经的实现缺陷：
+   * 整个进程只有一个随机 key，多个会话的前缀各不相同却抢同一个 key，服务端
+   * 只能反复逐出 ⇒ 缓存命中率随「并发会话数」塌陷（实测 buddy/hy4std 24.4%，
+   * 而同期单会话的 deepseek-v4.1-flash 为 98.4%）。
    */
-  sessionId;
+  fallbackSessionId;
   /** 动态模型缓存（首次 listModels 成功后填充）。 */
   remoteModels;
   /**
@@ -35753,6 +35794,27 @@ var BuddyAdapter = class _BuddyAdapter extends LlmAdapter2 {
    * 开始时抛 `registration.adapter.prepareCall is not a function`。这里把
    * 模型解析与分发绑定到同一个适配器实例（与 CodeArtsAdapter 同款 shim）。
    */
+  /**
+   * 解析本次请求应使用的 `prompt_cache_key`。
+   *
+   * ⚠️ **必须逐请求取 `options.sessionId`**，不能读实例常量。
+   *
+   * `GenerateOptions.sessionId` 由 `dsh-agent-loop` 在每轮请求时填入
+   * （`sessionId: this.session.id`，见 `dsh-agent-loop` 的 `buildRequest`），
+   * 是 DSH 的真实会话标识，同一会话内稳定、跨会话天然不同 —— 正是前缀缓存
+   * 需要的分桶键。
+   *
+   * 早期实现把它在构造期固化成实例常量，导致**整个进程共用一个随机 key**：
+   * 多个会话前缀不同却抢同一个桶，服务端反复逐出彼此的缓存。实测
+   * buddy/hy4std 命中率 24.4%、其中 73% 的步是全价重算，而同期单会话的
+   * deepseek-v4.1-flash 为 98.4% —— 差距的来源就是并发会话抢键。
+   *
+   * 兜底：调用方未下发 `sessionId`（非 agent-loop 的一次性调用）时退回进程级
+   * 随机值，行为与改动前一致，不影响既有路径。
+   */
+  cacheKeyFor(options) {
+    return resolveCacheKey(options.sessionId, this.fallbackSessionId);
+  }
   async prepareCall(provider, model, signal) {
     return {
       model: await this.resolveModel(provider, model, signal),
@@ -35853,7 +35915,10 @@ var BuddyAdapter = class _BuddyAdapter extends LlmAdapter2 {
       //   不带该字段 → prompt_tokens=8027, prompt_cache_hit_tokens=0,    credit=0.34
       //   带该字段   → prompt_tokens=8027, prompt_cache_hit_tokens=7808, credit=0.02
       // 仅此一个字段的差异，费用差约 17 倍。同 key 重复请求稳定命中同一前缀。
-      prompt_cache_key: this.sessionId
+      //
+      // ⚠️ 取**逐请求**的会话标识，不能读实例常量 —— 后者会让全进程共用一个
+      // 随机 key，多会话互相逐出缓存（见 `cacheKeyFor` 的实测归因）。
+      prompt_cache_key: this.cacheKeyFor(options)
     };
     if (tools !== void 0 && tools.length > 0) bodyObj.tools = tools;
     if (options.temperature !== void 0) bodyObj.temperature = options.temperature;
@@ -39865,6 +39930,11 @@ function canonicalReasoningEffortFor(effort) {
 // vendor/channel-pack/src/trae.ts
 import { createHash as createHash4 } from "node:crypto";
 
+// vendor/channel-pack/src/cache-token-count.ts
+function readCacheTokenCount(value) {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? Math.trunc(value) : void 0;
+}
+
 // vendor/channel-pack/src/trae-product.ts
 var TRAE_AGENT_HOST = "https://trae-api-cn.mchost.guru";
 var TRAE_UG_HOST = "https://api.trae.cn";
@@ -40622,6 +40692,23 @@ function parseTraeSSELine(eventName, dataLine) {
       break;
   }
   return ev;
+}
+function traeUsageFromTokenUsage(raw) {
+  const num2 = (value) => typeof value === "number" && Number.isFinite(value) && value >= 0 ? Math.trunc(value) : void 0;
+  const promptTokens = num2(raw.prompt_tokens);
+  const cacheRead = readCacheTokenCount(raw.cache_read_input_tokens);
+  const cacheWrite = num2(raw.cache_creation_input_tokens);
+  const completionTokens = num2(raw.completion_tokens);
+  const reasoningTokens = num2(raw.reasoning_tokens);
+  const billed = (promptTokens ?? 0) - (cacheRead ?? 0) - (cacheWrite ?? 0);
+  const inputTokens = Math.max(0, billed);
+  return {
+    inputTokens,
+    outputTokens: completionTokens ?? 0,
+    ...cacheRead !== void 0 ? { cacheReadTokens: cacheRead } : {},
+    ...cacheWrite !== void 0 && cacheWrite > 0 ? { cacheWriteTokens: cacheWrite } : {},
+    ...reasoningTokens !== void 0 && reasoningTokens > 0 ? { reasoningTokens } : {}
+  };
 }
 function normalizeTraeToolCalls(calls) {
   return calls.map((call) => {
@@ -41567,17 +41654,7 @@ var TraeAdapter = class extends LlmAdapter5 {
                 }
                 case "token_usage": {
                   if (ev.usage !== void 0) {
-                    const promptTokens = typeof ev.usage.prompt_tokens === "number" ? ev.usage.prompt_tokens : 0;
-                    const completionTokens = typeof ev.usage.completion_tokens === "number" ? ev.usage.completion_tokens : 0;
-                    const reasoningTokens = typeof ev.usage.reasoning_tokens === "number" ? ev.usage.reasoning_tokens : void 0;
-                    yield {
-                      type: "usage",
-                      usage: {
-                        inputTokens: promptTokens,
-                        outputTokens: completionTokens,
-                        ...reasoningTokens !== void 0 && reasoningTokens > 0 ? { reasoningTokens } : {}
-                      }
-                    };
+                    yield { type: "usage", usage: traeUsageFromTokenUsage(ev.usage) };
                   }
                   break;
                 }
@@ -74827,6 +74904,7 @@ export {
   CODEARTS_USER_AGENT,
   Config,
   KEEPALIVE_MAX_IDLE_MS,
+  TRAE as TRAE_PRODUCT_FOR_TEST,
   ZCODE_INFERENCE_MIN_APP_VERSION,
   apply,
   buildZcodeSystemBlocks,
@@ -74849,14 +74927,20 @@ export {
   msUntilNextUtc8Midnight,
   name,
   parseDoubaoCredential,
+  parseTraeSSELine,
   parseWindowsProxy,
   refreshCatalogsOnce,
+  resolveCacheKey,
   rewriteTencentContentFingerprints,
   sanitizeToolSchema as sanitizeToolSchemaForTest,
   serializeTraeMessagesForTest,
   sessionIdFromCookie,
   shouldRefreshNow,
   stripClineSnapshotSuffix,
+  traeMaxModeFields,
+  traeSOLOHeaders,
+  traeUsageFromTokenUsage,
+  transformToSOLOBody,
   withCallerSystem,
   zcodeInferenceAppVersion
 };

@@ -18,6 +18,7 @@ import {
   ReasoningEffortId,
 } from '@deepseek-ai/dsh-llm'
 import { AccountPool, providerCatalogVisible } from './account-pool.js'
+import { resolveCacheKey } from './cache-key.js'
 import { RemoteCatalogGate } from './remote-catalog-gate.js'
 import { settingsNamespaceFor } from './settings-compat.js'
 import {
@@ -1001,10 +1002,15 @@ export class BuddyAdapter extends LlmAdapter {
   private readonly product: BuddyProduct
   private readonly fetchImpl: typeof fetch
   /**
-   * 前缀缓存会话标识（prompt_cache_key）。同一会话内所有请求复用同一 key，
-   * 服务端据此把相同前缀的 KV 缓存跨请求复用；缺失时缓存命中恒为 0。
+   * 前缀缓存会话标识的**兜底值**（进程级随机）。
+   *
+   * ⚠️ 只在调用方**没有**下发 `GenerateOptions.sessionId` 时使用。真实会话标识
+   * 必须逐请求取（见 `cacheKeyFor`）——把它当实例常量是本适配器曾经的实现缺陷：
+   * 整个进程只有一个随机 key，多个会话的前缀各不相同却抢同一个 key，服务端
+   * 只能反复逐出 ⇒ 缓存命中率随「并发会话数」塌陷（实测 buddy/hy4std 24.4%，
+   * 而同期单会话的 deepseek-v4.1-flash 为 98.4%）。
    */
-  private readonly sessionId: string
+  private readonly fallbackSessionId: string
   /** 动态模型缓存（首次 listModels 成功后填充）。 */
   private remoteModels: BuddyRemoteModel[] | undefined
   /**
@@ -1038,7 +1044,7 @@ export class BuddyAdapter extends LlmAdapter {
     // 默认 CodeBuddy，保证既有行为完全不变。
     this.product = options.product ?? CODEBUDDY
     this.fetchImpl = options.fetchImpl ?? fetch
-    this.sessionId = options.sessionId ?? crypto.randomUUID().replace(/-/g, '')
+    this.fallbackSessionId = options.sessionId ?? crypto.randomUUID().replace(/-/g, '')
     this.catalogGate = new RemoteCatalogGate({
       ...options.now === undefined ? {} : { now: options.now },
       ...options.catalogCooldownMs === undefined ? {} : { cooldownMs: options.catalogCooldownMs },
@@ -1444,6 +1450,28 @@ export class BuddyAdapter extends LlmAdapter {
    * 开始时抛 `registration.adapter.prepareCall is not a function`。这里把
    * 模型解析与分发绑定到同一个适配器实例（与 CodeArtsAdapter 同款 shim）。
    */
+  /**
+   * 解析本次请求应使用的 `prompt_cache_key`。
+   *
+   * ⚠️ **必须逐请求取 `options.sessionId`**，不能读实例常量。
+   *
+   * `GenerateOptions.sessionId` 由 `dsh-agent-loop` 在每轮请求时填入
+   * （`sessionId: this.session.id`，见 `dsh-agent-loop` 的 `buildRequest`），
+   * 是 DSH 的真实会话标识，同一会话内稳定、跨会话天然不同 —— 正是前缀缓存
+   * 需要的分桶键。
+   *
+   * 早期实现把它在构造期固化成实例常量，导致**整个进程共用一个随机 key**：
+   * 多个会话前缀不同却抢同一个桶，服务端反复逐出彼此的缓存。实测
+   * buddy/hy4std 命中率 24.4%、其中 73% 的步是全价重算，而同期单会话的
+   * deepseek-v4.1-flash 为 98.4% —— 差距的来源就是并发会话抢键。
+   *
+   * 兜底：调用方未下发 `sessionId`（非 agent-loop 的一次性调用）时退回进程级
+   * 随机值，行为与改动前一致，不影响既有路径。
+   */
+  private cacheKeyFor(options: GenerateOptions): string {
+    return resolveCacheKey(options.sessionId, this.fallbackSessionId)
+  }
+
   async prepareCall(
     provider: string,
     model: string,
@@ -1581,7 +1609,10 @@ export class BuddyAdapter extends LlmAdapter {
       //   不带该字段 → prompt_tokens=8027, prompt_cache_hit_tokens=0,    credit=0.34
       //   带该字段   → prompt_tokens=8027, prompt_cache_hit_tokens=7808, credit=0.02
       // 仅此一个字段的差异，费用差约 17 倍。同 key 重复请求稳定命中同一前缀。
-      prompt_cache_key: this.sessionId,
+      //
+      // ⚠️ 取**逐请求**的会话标识，不能读实例常量 —— 后者会让全进程共用一个
+      // 随机 key，多会话互相逐出缓存（见 `cacheKeyFor` 的实测归因）。
+      prompt_cache_key: this.cacheKeyFor(options),
     }
     if (tools !== undefined && tools.length > 0) bodyObj.tools = tools
     if (options.temperature !== undefined) bodyObj.temperature = options.temperature
@@ -2117,7 +2148,8 @@ export class BuddyAdapter extends LlmAdapter {
     // 多数账号不带也 200（无害），故**三条出站路径都必须发**，删任何一枚都会让
     // 「要求三头」的账号整条渠道不可用 —— 别按「多数账号无害」把它删了。
     // 语义：逐请求一次性 id（上游只当 completion id 的种子 + 准入判据），
-    // ⚠️ 刻意不复用 `this.sessionId` —— 那是 `prompt_cache_key` 的分桶键，两码事。
+    // ⚠️ 刻意不复用前缀缓存的 sessionId（`cacheKeyFor` 的返回值）—— 那是
+    // `prompt_cache_key` 的分桶键，要求**跨请求稳定**；这里是逐请求一次性，两码事。
     const conversationId = crypto.randomUUID().replace(/-/g, '')
     headers.set('X-Conversation-ID', conversationId)
     headers.set('X-Conversation-Request-ID', conversationId)

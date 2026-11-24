@@ -97,8 +97,17 @@ export { createChannelFetch, parseWindowsProxy, channelProxyBypassed } from './c
 // 「多 tool_call 时工具结果图片必须排在全部 tool 之后」这条语义只能靠出站报文验证，
 // 而走 `stream()` 会先撞模型能力门（图片能力来自远端目录）⇒ 离线桩造不动。
 export { serializeTraeMessagesForTest } from './trae-adapter.js'
+// ⚠️ **仅供离线套件**：SOLO `token_usage` → DSH `TokenUsage` 的归一（含缓存互斥减法）。
+// 缺陷本体现在表现为 `cacheReadTokens` 恒缺席 ⇒ DSH 把它归一成 0 ⇒ 界面「命中 0%」。
+export { traeUsageFromTokenUsage } from './trae.js'
+// ⚠️ **仅供真机探针**：TRAE 请求构造三件套，用于离线外的「上游到底回不回传缓存」取证。
+export { traeSOLOHeaders, transformToSOLOBody, parseTraeSSELine, traeMaxModeFields } from './trae.js'
+export { TRAE as TRAE_PRODUCT_FOR_TEST } from './trae-product.js'
 // ⚠️ **仅供离线套件**：腾讯系工具 schema 清洗（`\0` → `\^@` 等四类形态）。
 export { sanitizeToolSchema as sanitizeToolSchemaForTest } from './buddy-adapter.js'
+// ⚠️ **仅供离线套件**：前缀缓存分桶键的解析（buddy / workbuddy / codearts 三家共用）。
+// 缺陷是「实例常量 vs 逐请求」的选择，只能靠把取值逻辑抽成纯函数才测得住。
+export { resolveCacheKey } from './cache-key.js'
 // ⚠️ **仅供离线套件**：续期判据三腿（access / refresh 寿命 / 保活）。
 export { shouldRefreshNow, KEEPALIVE_MAX_IDLE_MS } from './expiry-sync.js'
 // ⚠️ **仅供离线套件**：豆包渠道的设备身份派生 / DSML 流式归一化 / 签到排除表。

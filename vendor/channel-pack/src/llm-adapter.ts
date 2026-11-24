@@ -7,6 +7,7 @@ import {
 import type { GenerateOptions, LlmModelInfo, LlmProviderInfo, LlmResolvedModelInfo, StreamChunk } from '@deepseek-ai/dsh-llm'
 import { ReasoningEffortId, ToolCallId } from '@deepseek-ai/dsh-llm'
 import { AccountPool, providerCatalogVisible } from './account-pool.js'
+import { resolveCacheKey } from './cache-key.js'
 import { RemoteCatalogGate } from './remote-catalog-gate.js'
 import { settingsNamespaceFor } from './settings-compat.js'
 import { nextUtc8DayStartMs } from './model-queue.js'
@@ -1018,13 +1019,21 @@ class DsmlContentExtractor {
 export class CodeArtsAdapter extends LlmAdapter {
   private readonly fetchImpl: typeof fetch
   private readonly chatId: string
-  private readonly sessionId: string
+  /**
+   * 前缀缓存会话标识的**兜底值**（进程级随机）。
+   *
+   * ⚠️ 只在调用方**没有**下发 `GenerateOptions.sessionId` 时使用。真实会话
+   * 标识必须逐请求取（见 `cacheKeyFor`）——把它当实例常量会让整个进程共用
+   * 一个随机 key，多会话前缀不同却抢同一桶，服务端反复逐出彼此的缓存 ⇒
+   * 命中率随并发会话数塌陷（与 buddy-adapter 同款缺陷）。
+   */
+  private readonly fallbackSessionId: string
 
   constructor(private readonly options: CodeArtsAdapterOptions) {
     super()
     this.fetchImpl = options.fetchImpl ?? fetch
     this.chatId = options.chatId ?? crypto.randomUUID().replace(/-/g, '')
-    this.sessionId = options.sessionId ?? crypto.randomUUID().replace(/-/g, '')
+    this.fallbackSessionId = options.sessionId ?? crypto.randomUUID().replace(/-/g, '')
     this.catalogGate = new RemoteCatalogGate(
       options.onCatalogLoaded === undefined ? {} : { onLoaded: options.onCatalogLoaded },
     )
@@ -1182,6 +1191,26 @@ export class CodeArtsAdapter extends LlmAdapter {
     return resolved
   }
 
+  /**
+   * 解析本次请求应使用的会话标识（`prompt_cache_key` 与 `Session-Id` 头共用）。
+   *
+   * ⚠️ **必须逐请求取 `options.sessionId`**，不能读实例常量。
+   *
+   * `GenerateOptions.sessionId` 由 `dsh-agent-loop` 在每轮请求时填入
+   * （`sessionId: this.session.id`），是 DSH 的真实会话标识：同一会话内稳定、
+   * 跨会话天然不同 —— 正是前缀缓存需要的分桶键。
+   *
+   * 早期实现把它在构造期固化成实例常量，导致整个进程共用一个随机 key：
+   * 多个会话前缀不同却抢同一个桶，服务端反复逐出彼此的缓存 ⇒ 命中率随并发
+   * 会话数塌陷（buddy-adapter 上实测 24.4% vs 单会话 98.4%）。
+   *
+   * 兜底：调用方未下发 `sessionId`（非 agent-loop 的一次性调用）时退回进程级
+   * 随机值，行为与改动前一致。
+   */
+  private cacheKeyFor(options: GenerateOptions): string {
+    return resolveCacheKey(options.sessionId, this.fallbackSessionId)
+  }
+
   async prepareCall(
     provider: string,
     model: string,
@@ -1259,7 +1288,10 @@ export class CodeArtsAdapter extends LlmAdapter {
       stream: true,
       // prompt_cache_key 让服务端启用前缀缓存并在 usage 中返回 cached_tokens，
       // 缺少该字段时缓存命中恒为 0（实测 2026-08-24）。
-      prompt_cache_key: this.sessionId,
+      //
+      // ⚠️ 取**逐请求**的会话标识，不能读实例常量 —— 后者会让全进程共用一个
+      // 随机 key，多会话互相逐出缓存（见 `cacheKeyFor` 的归因说明）。
+      prompt_cache_key: this.cacheKeyFor(options),
       // include/reasoning_summary 对齐 Rust 端 CodeArtsExtraFields，
       // 让服务端返回加密 reasoning 内容与摘要。
       include: ['reasoning.encrypted_content'],
@@ -1363,7 +1395,9 @@ export class CodeArtsAdapter extends LlmAdapter {
       signed.forEach((value, key) => { if (key !== 'content-type') headers.set(key, value) })
       headers.set('Content-Type', 'application/json')
       headers.set('Chat-Id', this.chatId)
-      headers.set('Session-Id', this.sessionId)
+      // ⚠️ 与 `prompt_cache_key` 同源：两者都是「本请求属于哪个会话」的表达，
+      // 必须逐请求取，不能读实例常量（见 `cacheKeyFor`）。
+      headers.set('Session-Id', this.cacheKeyFor(options))
       headers.set('lang', 'en')
 
       response = await this.fetchImpl(url, {
@@ -1871,7 +1905,7 @@ export class CodeArtsAdapter extends LlmAdapter {
              * ```
              * 那是上游的 **`error_msg`** —— 而 `error_code`（**唯一能定位的那个**）
              * 被这个分支丢掉了。上游做过对照实验（同一凭据 / 模型 / 请求体形状）：
-             * 裸请求 200、50 个工具 200、`pattern` 含 ` ` 也 200，但
+             * 裸请求 200、50 个工具 200、`pattern` 含一个 NUL 字符也 200，但
              * `maas_type: benefit` → 404 `APIG.0101`、`maas_type: education` → 403
              * `TM.00001027` ⇒ **模型本身没问题**，问题全在「吞掉的那段信息」里。
              *
@@ -2265,7 +2299,9 @@ export class CodeArtsAdapter extends LlmAdapter {
     model: string,
     signal?: AbortSignal,
   ): Promise<CodeArtsQueueStatus | undefined> {
-    const url = `${QUEUE_STATUS_BASE}?model=${encodeURIComponent(model)}&task_id=${encodeURIComponent(this.sessionId)}`
+    // 队列状态查询无 `options`（它由流内轮询触发，不携带请求上下文），
+    // 用兜底会话标识与改动前的实例常量行为一致。
+    const url = `${QUEUE_STATUS_BASE}?model=${encodeURIComponent(model)}&task_id=${encodeURIComponent(this.fallbackSessionId)}`
     const signed = await signRequestHuawei(
       credential.access_key_id,
       credential.secret_access_key,

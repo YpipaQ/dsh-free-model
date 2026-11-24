@@ -40,6 +40,7 @@ import {
   isTraeModelCallable,
   traeMaxModeFields,
   traeSOLOHeaders,
+  traeUsageFromTokenUsage,
   transformToSOLOBody,
   type TraeCredential,
   type TraeSSEEvent,
@@ -1579,17 +1580,7 @@ export class TraeAdapter extends LlmAdapter {
                 }
                 case 'token_usage': {
                   if (ev.usage !== undefined) {
-                    const promptTokens = typeof ev.usage.prompt_tokens === 'number' ? ev.usage.prompt_tokens : 0
-                    const completionTokens = typeof ev.usage.completion_tokens === 'number' ? ev.usage.completion_tokens : 0
-                    const reasoningTokens = typeof ev.usage.reasoning_tokens === 'number' ? ev.usage.reasoning_tokens : undefined
-                    yield {
-                      type: 'usage',
-                      usage: {
-                        inputTokens: promptTokens,
-                        outputTokens: completionTokens,
-                        ...reasoningTokens !== undefined && reasoningTokens > 0 ? { reasoningTokens } : {},
-                      },
-                    }
+                    yield { type: 'usage', usage: traeUsageFromTokenUsage(ev.usage) }
                   }
                   break
                 }

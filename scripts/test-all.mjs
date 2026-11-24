@@ -85,6 +85,12 @@ const suites = [
   ['channel-accio-rotate', 'channel-accio-rotate-test.mjs', []],
   // TRAE 多 tool_call 时工具结果图片必须排在全部 tool 之后（否则 4027 会话永久损坏）。
   ['channel-trae-image-order', 'channel-trae-image-order-test.mjs', []],
+  // TRAE 的 SOLO `token_usage` → DSH `TokenUsage`：缓存命中必须被读出且做互斥减法
+  // （旧实现整对丢弃 `cache_read_input_tokens` ⇒ 界面恒「命中 0%」）。
+  ['channel-trae-cache-usage', 'channel-trae-cache-usage-test.mjs', []],
+  // 前缀缓存分桶键必须逐请求取 `options.sessionId`（实例常量会让全进程共用一个
+  // 随机 key，多会话互相逐出缓存 ⇒ hy4std 实测只 24.4% 命中）。
+  ['channel-cache-key', 'channel-cache-key-test.mjs', []],
   // ZCode：system 数组恒 3 块（第 4 块 ⇒ 405+3012），调用方 system 走 messages。
   ['channel-zcode-system-blocks', 'channel-zcode-system-blocks-test.mjs', []],
   // ZCode 405 恒不可重试（归 SERVER 会让 harness 白重试 5 轮并累积账号冷却惩罚）。
