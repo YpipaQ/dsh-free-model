@@ -34303,7 +34303,7 @@ var CodeArtsAdapter = class extends LlmAdapter {
           }
         }
         if (!isQueueError(response.status, errorText)) {
-          const probe = await this.queryQueueStatus(credential, options.model, options.signal);
+          const probe = await this.queryQueueStatus(credential, options.model, options.signal, this.cacheKeyFor(options));
           if (probe === void 0 || probe.status === "working") {
             const code = httpErrorCode(response.status, errorText);
             throw new LlmError2(`codearts: model request failed with HTTP ${response.status}`, code, { status: response.status });
@@ -34315,7 +34315,7 @@ var CodeArtsAdapter = class extends LlmAdapter {
         throw new LlmError2("codearts: queue wait timed out after 30 minutes", "QUEUE");
       }
       if (options.signal?.aborted) throw new LlmError2("codearts: request aborted while waiting in queue", "QUEUE");
-      const status = await this.queryQueueStatus(credential, options.model, options.signal);
+      const status = await this.queryQueueStatus(credential, options.model, options.signal, this.cacheKeyFor(options));
       if (status?.status === "error" || status?.status === "queue_full") {
         throw new LlmError2(`codearts: ${status.message || `queue status: ${status.status}`}`, "QUEUE");
       }
@@ -34644,8 +34644,8 @@ var CodeArtsAdapter = class extends LlmAdapter {
    * @returns 解析后的排队状态，或当端点不可达
    *   或返回无法识别的载荷时返回 `undefined`。
    */
-  async queryQueueStatus(credential, model, signal) {
-    const url = `${QUEUE_STATUS_BASE}?model=${encodeURIComponent(model)}&task_id=${encodeURIComponent(this.fallbackSessionId)}`;
+  async queryQueueStatus(credential, model, signal, taskId) {
+    const url = `${QUEUE_STATUS_BASE}?model=${encodeURIComponent(model)}&task_id=${encodeURIComponent(taskId ?? this.fallbackSessionId)}`;
     const signed = await signRequestHuawei(
       credential.access_key_id,
       credential.secret_access_key,

@@ -112,4 +112,24 @@ check('真实会话标识形态可原样透传', () => {
   assert.equal(keys.size, 3, '三个并发会话必须落在三个不同桶')
 })
 
+// ── 6. 队列状态查询必须用同一会话标识（codearts 的 task_id）─────────
+// `queryQueueStatus` 是「查询某个会话的并发队列状态」，用兜底值会查错对象：
+// 本会话明明在排队却被判成 working 直接抛错，或被别的会话的 queue_full 误伤。
+// 该路径由流内轮询触发，离线桩里造不出真请求，故直接钉住源码里的调用形态。
+check('队列状态查询必须传本请求的会话标识，而非兜底值', () => {
+  const src = fs.readFileSync(
+    new URL('../vendor/channel-pack/src/llm-adapter.ts', import.meta.url), 'utf8')
+  // 两处调用都必须把 cacheKeyFor(options) 作为第 4 实参传下去
+  const calls = src.match(/queryQueueStatus\(credential, options\.model, options\.signal[^)]*\)/g) ?? []
+  assert.ok(calls.length >= 2, `应有至少 2 处 queryQueueStatus 调用，实际 ${calls.length}`)
+  for (const call of calls) {
+    assert.match(call, /this\.cacheKeyFor\(options\)/,
+      `队列查询必须传本请求会话标识，实际：${call}`)
+  }
+  // 且函数体不得只认兜底值
+  const body = src.match(/const url = `\$\{QUEUE_STATUS_BASE\}.*?`/s)?.[0] ?? ''
+  assert.match(body, /taskId \?\? this\.fallbackSessionId/,
+    'task_id 应优先用传入的 taskId，缺省才退回兜底值')
+})
+
 console.log('channel-cache-key: 全部通过（' + checks.length + ' 组）')

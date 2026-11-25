@@ -1557,7 +1557,7 @@ export class CodeArtsAdapter extends LlmAdapter {
           // 排队状态端点——只有端点确认会话在排队（waiting/queue_full）时
           // 才进入排队流程；端点不可达或未排队（working）则按原错误分类
           // 立即抛出，避免把真错误（如 401/400）拖成 30 分钟超时。
-          const probe = await this.queryQueueStatus(credential, options.model, options.signal)
+          const probe = await this.queryQueueStatus(credential, options.model, options.signal, this.cacheKeyFor(options))
           if (probe === undefined || probe.status === 'working') {
             // 与 deepseek 适配器的 httpErrorCode 词汇保持一致；
             // 400 + 上下文超限措辞归为 CONTEXT_WINDOW_EXCEEDED（触发 compaction）。
@@ -1582,7 +1582,7 @@ export class CodeArtsAdapter extends LlmAdapter {
         throw new LlmError('codearts: queue wait timed out after 30 minutes', 'QUEUE')
       }
       if (options.signal?.aborted) throw new LlmError('codearts: request aborted while waiting in queue', 'QUEUE')
-      const status = await this.queryQueueStatus(credential, options.model, options.signal)
+      const status = await this.queryQueueStatus(credential, options.model, options.signal, this.cacheKeyFor(options))
       if (status?.status === 'error' || status?.status === 'queue_full') {
         throw new LlmError(`codearts: ${status.message || `queue status: ${status.status}`}`, 'QUEUE')
       }
@@ -2298,10 +2298,14 @@ export class CodeArtsAdapter extends LlmAdapter {
     credential: CodeArtsCredential,
     model: string,
     signal?: AbortSignal,
+    /** 本请求的会话标识（与 `prompt_cache_key` / `Session-Id` 头同源）。 */
+    taskId?: string,
   ): Promise<CodeArtsQueueStatus | undefined> {
-    // 队列状态查询无 `options`（它由流内轮询触发，不携带请求上下文），
-    // 用兜底会话标识与改动前的实例常量行为一致。
-    const url = `${QUEUE_STATUS_BASE}?model=${encodeURIComponent(model)}&task_id=${encodeURIComponent(this.fallbackSessionId)}`
+    // task_id 必须与**本次 chat 请求**携带的会话标识一致：该端点是「查询某个
+    // 会话的并发队列状态」，查错对象会让排队判定（waiting / queue_full / error）
+    // 落到别的会话上 —— 表现为本会话明明在排队却被判成 working 直接抛错，
+    // 或被别的会话的 queue_full 误伤。缺省才退回兜底值。
+    const url = `${QUEUE_STATUS_BASE}?model=${encodeURIComponent(model)}&task_id=${encodeURIComponent(taskId ?? this.fallbackSessionId)}`
     const signed = await signRequestHuawei(
       credential.access_key_id,
       credential.secret_access_key,
