@@ -103,6 +103,8 @@ export { traeUsageFromTokenUsage } from './trae.js'
 // ⚠️ **仅供真机探针**：TRAE 请求构造三件套，用于离线外的「上游到底回不回传缓存」取证。
 export { traeSOLOHeaders, transformToSOLOBody, parseTraeSSELine, traeMaxModeFields } from './trae.js'
 export { TRAE as TRAE_PRODUCT_FOR_TEST } from './trae-product.js'
+// ⚠️ **仅供真机探针**：TRAE 积分余额查询，用于核对「token 消耗 ↔ 实际扣费」。
+export { fetchTraeCreditBalance } from './trae-credits.js'
 // ⚠️ **仅供离线套件**：腾讯系工具 schema 清洗（`\0` → `\^@` 等四类形态）。
 export { sanitizeToolSchema as sanitizeToolSchemaForTest } from './buddy-adapter.js'
 // ⚠️ **仅供离线套件**：前缀缓存分桶键的解析（buddy / workbuddy / codearts 三家共用）。

@@ -82,7 +82,12 @@ dsh plugin --profile web add dsh-our-free-model         # 回滚到上游 2.1.0
 |---|---|---|
 | **豆包** | **签到未实现**；模型能力**未真机验证** | 签到需 `a_bogus` 签名 + CDP 页面会话拉起浏览器，本版本不移植该路径（已加入自动签到排除表，**手动签到**同样不可用）。协议照上游实现，但开发环境无豆包账号 ⇒ 未经实测 |
 | **ZCode** | **自动签到默认关闭** | 每次领取都要现场产阿里云 captcha（会拉起 headful Chromium，且按设备限流）。面板里可手动领取 |
+| **Hy 系模型**（hy3 / hy4std / hy4flash）| **前缀缓存命中率显著低于同渠道其它模型** | 服务端侧差异，**非本插件问题**：同一份适配器代码、同一套请求构造下，`deepseek-v4.1-flash` 稳定 98%~99%，`hy4std` 约 24%、`hy3` 约 0.3%（基于 152~3515 次真实请求的统计）。Hy 系长任务会因此产生更多未命中计费，重上下文场景建议改用 `deepseek-v4.1-flash` |
 | **OfficeAce / Accio** | 与其余渠道**同构**，无特殊限制 | — |
+
+⚠️ 「缓存命中率」指上游在 `usage` 里回传的命中量占输入的比例。该数值**由服务端决定**，
+插件只负责按会话稳定分桶（`prompt_cache_key` 取 DSH 的会话 id）并把回传值原样上报 —
+同一个适配器在 deepseek 上能到 99%，在 Hy 系上只有个位数，说明差异在模型侧。
 
 ⚠️ 「自动签到」只覆盖**有签到接口且无代价**的渠道；有代价的渠道（如 ZCode、豆包）一律排除，
 不会在后台尝试。
@@ -101,7 +106,7 @@ dsh plugin --profile web add dsh-our-free-model         # 回滚到上游 2.1.0
 | `packages/standalone/`（独立 Web 产品）、`worker/`（EAC 的 Cloudflare 授权网关）、`feed/` + `catalog/`（公告源与发布清单） | 三块卫星全部 `import` 被删车道，留着就是一套永远跑不起来的代码。 |
 
 规模变化：`src/` 从 **58 个模块 → 5 个**（`store/key/chan-relay/egress/trust`），宿主 `index.js` 从
-**2343 行 → 684 行**，浏览器半身 `client.js` 从 **5992 行 → 2595 行**，离线测试从 45 个套件 → **32 个**。
+**2343 行 → 684 行**，浏览器半身 `client.js` 从 **5992 行 → 2595 行**，离线测试从 45 个套件 → **34 个**。
 界面里所有 `animation` 与 `@keyframes` 也已删除。
 
 ## 配置
@@ -155,7 +160,7 @@ POST /chan-gateway/rotate  轮换中继密钥
 ## 测试
 
 ```bash
-npm test                            # 32 个离线套件，无需网络、不花额度
+npm test                            # 34 个离线套件，无需网络、不花额度
 node scripts/host-smoke-test.mjs     # 只跑宿主 HTTP 面
 node scripts/client-lint.mjs         # 只跑浏览器半身（字典键一一对应 + CSS 规则可达）
 ```
@@ -186,6 +191,8 @@ node scripts/client-lint.mjs         # 只跑浏览器半身（字典键一一�
 | `channel-catalog-refresh` | 模型上下架自适应（10 家 `refreshCatalog` + 30 分钟定时保鲜 + 失败保留旧目录）|
 | `channel-credit-exhausted` / `channel-tool-args` / `channel-expiry-terminal` | 额度耗尽 14018 不按 1h 兜底 / 工具参数三分（掐断 vs 写坏）/ 续期落盘失败=终态（各家注入自己的错误类）|
 | `channel-fingerprint` | 腾讯系内容指纹改写：assistant 正文那格一旦漏改，带毒历史每轮重放 ⇒ **会话报废且换任何腾讯系模型都一样**；白名单严格只有 buddy/workbuddy；良性文本不被破坏 |
+| `channel-trae-cache-usage` | TRAE 的 SOLO `token_usage` → DSH `TokenUsage`：缓存命中必须被读出并做互斥减法（`prompt_tokens` 含缓存，与 Anthropic 相反），且「未上报 / 明确 0 / 命中」三态不得折叠 |
+| `channel-cache-key` | 前缀缓存分桶键必须**逐请求**取 `options.sessionId`。实例常量化会让全进程共用一个随机 key（实测多会话下 hy4std 只 24%，而单会话的 deepseek 为 98%）；另含 CodeArts 队列状态查询必须用同一会话标识 |
 
 上游的 45 个套件里，其余的都在测被删掉的车道，已一并移除。测试**只在仓库里跑**（npm 包不含 `scripts/`）。
 

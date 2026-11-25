@@ -88,7 +88,14 @@ Not every channel has the same capabilities. Only differences that **affect real
 |---|---|---|
 | **Doubao** | **No check-in**; capabilities **not verified against the live service** | Check-in needs `a_bogus` signing plus a CDP page session that launches a browser; that path is not ported (Doubao is excluded from auto check-in, and manual check-in is unavailable too). The protocol follows the upstream implementation, but no Doubao account was available ⇒ untested here |
 | **ZCode** | **Auto check-in is off by default** | Every claim mints an Aliyun captcha (headful Chromium, rate-limited per device). Manual claim is available in the panel |
+| **Hy-family models** (hy3 / hy4std / hy4flash) | **Prefix-cache hit rate is far below other models on the same channel** | A server-side difference, **not a plugin issue**: with the same adapter code and the same request construction, `deepseek-v4.1-flash` holds 98–99% while `hy4std` sits near 24% and `hy3` near 0.3% (measured across 152–3515 real requests). Long Hy-family sessions therefore incur more un-cached billing; prefer `deepseek-v4.1-flash` for context-heavy work |
 | **OfficeAce / Accio** | Same shape as every other channel, no special limits | — |
+
+⚠️ "Cache hit rate" means the cached share of input that the upstream reports in `usage`. That
+number is **decided by the server**; the plugin only keeps one stable bucket per session
+(`prompt_cache_key` takes the DSH session id) and reports the returned value unchanged. One
+adapter reaching 99% on deepseek and single digits on the Hy family shows the difference is
+model-side.
 
 ⚠️ "Auto check-in" only covers channels with a check-in endpoint that costs nothing. Channels
 whose check-in has a cost (ZCode, Doubao) are excluded and are never attempted in the background.
@@ -108,7 +115,7 @@ whose check-in has a cost (ZCode, Doubao) are excluded and are never attempted i
 
 Sizes: `src/` went from **58 modules to 5** (`store/key/chan-relay/egress/trust`), the host `index.js`
 from **2343 to 684 lines**, the browser half `client.js` from **5992 to 2595 lines**, and the offline
-suites from 45 to **32**. Every `animation` and `@keyframes` rule is gone as well.
+suites from 45 to **34**. Every `animation` and `@keyframes` rule is gone as well.
 
 ## Configuration
 
@@ -161,7 +168,7 @@ the browser half talks to it over the shell's `connection` RPC (`usage.tokenLedg
 ## Tests
 
 ```bash
-npm test                            # 32 offline suites: no network, no quota
+npm test                            # 34 offline suites: no network, no quota
 node scripts/host-smoke-test.mjs     # the host HTTP surface only
 node scripts/client-lint.mjs         # the browser half only (dictionary keys, CSS reachability)
 ```
@@ -192,6 +199,8 @@ node scripts/client-lint.mjs         # the browser half only (dictionary keys, C
 | `channel-catalog-refresh` | Model catalogue self-refresh (10 adapters expose `refreshCatalog`, a 30-minute timer keeps it fresh, failures keep the old catalogue) |
 | `channel-credit-exhausted` / `channel-tool-args` / `channel-expiry-terminal` | 14018 credit exhaustion must not fall back to 1h / tool args triage (truncated vs invalid) / save-failure after a successful refresh is terminal, with per-provider error classes |
 | `channel-fingerprint` | Tencent content-fingerprint rewriting: missing the assistant-body case means a poisoned history replays every turn — the session is dead **and switching to any other Tencent model does not help**; the allowlist is exactly buddy/workbuddy; benign text is left intact |
+| `channel-trae-cache-usage` | TRAE's SOLO `token_usage` → DSH `TokenUsage`: the cached share must be read and reduced exclusively (`prompt_tokens` includes cache, unlike Anthropic), and the three states (not reported / explicit zero / hit) must not collapse |
+| `channel-cache-key` | The prefix-cache bucket key must come from `options.sessionId` **per request**. Freezing it into an instance constant makes the whole process share one random key (measured: hy4std 24% across concurrent sessions vs 98% for a single-session model); also covers CodeArts queue-status queries using the same session identity |
 
 The other 37 of upstream's 45 suites tested lanes this fork deletes. The suites run **from a checkout
 only** — the npm package does not ship `scripts/`.

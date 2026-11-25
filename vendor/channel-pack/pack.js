@@ -74916,6 +74916,7 @@ export {
   diffChangedProviders as diffChangedProvidersForTest,
   doubaoDerivedDeviceIdentity,
   doubaoDeviceIdentityOf,
+  fetchTraeCreditBalance,
   findClineModelsDevEntry,
   fixDsmlMarkers,
   httpErrorCodeForZcode,
