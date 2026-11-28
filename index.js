@@ -116,8 +116,43 @@ export function apply(ctx) {
    * than the service, and its `admit` answers `undefined` — not a no-op function
    * — while the service is missing, which is what makes the fence fall through to
    * its own structural check instead of reading as "admitted".
+   *
+   * #871: on hosts since dsh 0.2.2-rc.2 — including the dsh 0.2.3-alpha.2 this
+   * was reproduced on — `connection.admit` internally reads `this.authentication`,
+   * and strict Cordis property validation throws `cannot get property
+   * "connection.authentication" without inject` for a fiber that never named it.
+   * `rejectionFor` catches that throw and answers the uniform 503 `admission
+   * unavailable`, which the pages render as 「无法连接插件后端」. So the service is
+   * resolved from a nested fiber that declares BOTH keys — the fix upstream
+   * shipped in 2.9.0, and the house pattern used here for
+   * `credentials`/`commands`/`llm` and `webServer`: that fiber pends on its own
+   * and never holds up the root fiber. Until it runs, or on a host that mounts
+   * nothing, the opportunistic `ctx.get` snapshot applies exactly as before.
    */
-  const fenceConnection = connectionAdmissionView(() => optional('connection'))
+  let fenceScoped = null
+  ctx.inject(['connection', 'connection.authentication'], scoped => {
+    fenceScoped = scoped
+  })
+  const fenceService = () => {
+    if (fenceScoped) {
+      try {
+        const declared = fenceScoped['connection']
+        if (declared) return declared
+      } catch {
+        // Older hosts without declared-scope reads: fall through.
+      }
+      try {
+        const looked = typeof fenceScoped.get === 'function'
+          ? fenceScoped.get('connection')
+          : undefined
+        if (looked) return looked
+      } catch {
+        // Same: the opportunistic snapshot below is the last resort.
+      }
+    }
+    return optional('connection')
+  }
+  const fenceConnection = connectionAdmissionView(fenceService)
 
   /** Set when this generation is disposed; late async callbacks must stand down. */
   let disposed = false
